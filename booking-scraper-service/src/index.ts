@@ -42,15 +42,21 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response) => {
   const companyId = (req.params.companyId || "").trim();
+  console.log(`[SCRAPER] Received scrape request for company: ${companyId}`);
   if (!companyId) {
     return res.status(400).json({ success: false, error: "companyId requerido" });
   }
 
   try {
+    console.log(`[SCRAPER] Starting scrape for company: ${companyId}`);
+    const startTime = Date.now();
     const result = await withLock(companyId, () => scrapeBookingReviews(companyId));
+    const duration = Date.now() - startTime;
+    console.log(`[SCRAPER] Scraping completed in ${duration}ms. Reviews: ${result.reviews.length}, Errors: ${result.errors.length}`);
     res.json({ success: true, data: result });
   } catch (error: any) {
     const message = error?.message || "Error desconocido";
+    console.error(`[SCRAPER] Scraping failed: ${message}`);
     const status =
       message === "SCRAPER_ALREADY_RUNNING"
         ? 409
