@@ -211,14 +211,51 @@ function detectTwoFactor(bodyText: string): boolean {
   );
 }
 
-async function selectSmsIfAvailable(page: Page): Promise<void> {
-  const smsSelectors = [
-    page.getByRole("button", { name: /sms|mensaje de texto|text message/i }),
-    page.getByRole("link", { name: /sms|mensaje de texto|text message/i }),
-    page.locator('text=/sms|mensaje de texto|text message/i'),
+async function selectTwoFactorMethod(
+  page: Page,
+  method: "sms" | "call"
+): Promise<void> {
+  const selectors =
+    method === "call"
+      ? [
+          page.getByRole("button", { name: /llamada|call|phone call/i }),
+          page.getByRole("link", { name: /llamada|call|phone call/i }),
+          page.locator('text=/llamada|call|phone call/i'),
+        ]
+      : [
+          page.getByRole("button", { name: /sms|mensaje de texto|text message/i }),
+          page.getByRole("link", { name: /sms|mensaje de texto|text message/i }),
+          page.locator('text=/sms|mensaje de texto|text message/i'),
+        ];
+
+  for (const locator of selectors) {
+    const count = await locator.count().catch(() => 0);
+    if (count === 0) continue;
+    const first = locator.first();
+    const visible = await first.isVisible().catch(() => false);
+    if (visible) {
+      await first.click().catch(() => undefined);
+      break;
+    }
+  }
+}
+
+async function requestTwoFactorCode(
+  page: Page,
+  method: "sms" | "call"
+): Promise<void> {
+  await selectTwoFactorMethod(page, method);
+
+  const sendSelectors = [
+    page.getByRole("button", { name: /enviar|send|continuar|continue/i }),
+    page.getByRole("link", { name: /enviar|send|continuar|continue/i }),
+    page.locator('button:has-text("Enviar")'),
+    page.locator('button:has-text("Send")'),
+    page.locator('button:has-text("Continuar")'),
+    page.locator('button:has-text("Continue")'),
   ];
 
-  for (const locator of smsSelectors) {
+  for (const locator of sendSelectors) {
     const count = await locator.count().catch(() => 0);
     if (count === 0) continue;
     const first = locator.first();
@@ -276,7 +313,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   if (hasEnvCookies) {
     if (detectTwoFactor(bodyText)) {
-      await selectSmsIfAvailable(page);
+      await requestTwoFactorCode(page, "sms");
       return "2fa_required";
     }
     console.log("[SCRAPER] Cookies loaded but Booking still redirected to login");
@@ -313,7 +350,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await randomScroll(page);
 
   if (await looksLikeTwoFactor(page)) {
-    await selectSmsIfAvailable(page);
+    await requestTwoFactorCode(page, "sms");
     return "2fa_required";
   }
 
@@ -347,10 +384,13 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
 export async function submitTwoFactorCode(
   session: BookingSession,
-  code: string
+  code: string,
+  method: "sms" | "call" = "sms"
 ): Promise<TwoFactorStatus> {
   const { page } = session;
   if (!code.trim()) return "invalid_code";
+
+  await requestTwoFactorCode(page, method);
 
   const codeSelectors = [
     'input[autocomplete="one-time-code"]',
@@ -375,7 +415,7 @@ export async function submitTwoFactorCode(
   await codeInput.fill("");
   await codeInput.type(code, { delay: 80 });
 
-  const submitSelector = 'button[type="submit"], button:has-text("Confirmar"), button:has-text("Verify"), button:has-text("Continuar")';
+  const submitSelector = 'button[type="submit"], button:has-text("Confirmar"), button:has-text("Verify"), button:has-text("Continuar"), button:has-text("Enviar")';
   const submitButton = await page.$(submitSelector);
   if (submitButton) {
     await submitButton.click();

@@ -160,7 +160,7 @@ app.post(
   requireApiKey,
   async (req: Request, res: Response) => {
     const companyId = (req.params.companyId || "").trim();
-    const { sessionId, code } = req.body || {};
+    const { sessionId, code, method } = req.body || {};
 
     if (!companyId || !sessionId || !code) {
       return res.status(400).json({
@@ -188,7 +188,11 @@ app.post(
 
     try {
       const result = await withLock(companyId, async () => {
-        const status = await submitTwoFactorCode(entry.session, String(code));
+        const status = await submitTwoFactorCode(
+          entry.session,
+          String(code),
+          method === "call" ? "call" : "sms"
+        );
         if (status !== "ok") {
           return { type: "invalid", status } as const;
         }
