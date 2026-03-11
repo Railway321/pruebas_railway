@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Request, type Response, type NextFunction } from "express";
 import { scrapeBookingReviews } from "./booking-scraper.js";
 
 const app = express();
@@ -11,7 +11,7 @@ if (!requiredApiKey) {
 
 const locks = new Set<string>();
 
-function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+function requireApiKey(req: Request, res: Response, next: NextFunction) {
   if (!requiredApiKey) {
     return res.status(500).json({ success: false, error: "SCRAPER_API_KEY missing" });
   }
@@ -36,11 +36,11 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-app.get("/health", (_req, res) => {
+app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-app.post("/scrape/:companyId", requireApiKey, async (req, res) => {
+app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response) => {
   const companyId = (req.params.companyId || "").trim();
   if (!companyId) {
     return res.status(400).json({ success: false, error: "companyId requerido" });
