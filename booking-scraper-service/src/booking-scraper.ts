@@ -180,10 +180,28 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
     await humanDelay(page);
     await randomScroll(page);
 
-    const exportButton =
-      (await page.$('text="Exportar"')) ||
-      (await page.$('text="Export"')) ||
-      (await page.$('button:has-text("Export")'));
+    const exportCandidates = [
+      page.getByRole("button", { name: /exportar|export/i }),
+      page.getByRole("link", { name: /exportar|export/i }),
+      page.locator('[data-testid*="export"]'),
+      page.locator('button:has-text("Exportar")'),
+      page.locator('button:has-text("Export")'),
+      page.locator('a:has-text("Exportar")'),
+      page.locator('a:has-text("Export")'),
+      page.locator('text=/exportar|export/i'),
+    ];
+
+    let exportButton = null as null | ReturnType<typeof page.locator>;
+    for (const locator of exportCandidates) {
+      const first = locator.first();
+      const count = await locator.count().catch(() => 0);
+      if (count === 0) continue;
+      const visible = await first.isVisible().catch(() => false);
+      if (visible) {
+        exportButton = first;
+        break;
+      }
+    }
 
     if (!exportButton) {
       throw new Error("Botón de exportación de reseñas no encontrado en Booking");
@@ -191,7 +209,7 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
 
     const [download] = await Promise.all([
       page.waitForEvent("download", { timeout: 60000 }),
-      exportButton.click(),
+      exportButton.scrollIntoViewIfNeeded().then(() => exportButton!.click()),
     ]);
 
     const stream = await download.createReadStream();
