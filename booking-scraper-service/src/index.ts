@@ -62,6 +62,8 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         ? 409
         : message === "BOOKING_AUTH_INVALID_CREDENTIALS"
         ? 401
+        : message === "BOOKING_AUTH_2FA_REQUIRED"
+        ? 401
         : message === "BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA"
         ? 503
         : message === "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR"

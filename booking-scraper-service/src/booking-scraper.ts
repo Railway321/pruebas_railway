@@ -131,6 +131,7 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
   const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
   const loginUrl = getEnvOrThrow("BOOKING_LOGIN_URL");
+  const hasEnvCookies = Boolean(process.env.BOOKING_COOKIES_JSON);
 
   const browser = await chromium.launch({
     headless: true,
@@ -166,7 +167,29 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
     await humanDelay(page);
     await randomScroll(page);
 
+    console.log(`[SCRAPER] Current URL after base load: ${page.url()}`);
+
     if (page.url().startsWith(loginUrl)) {
+      const bodyTextRaw = (await page.textContent("body")) || "";
+      const bodyText = bodyTextRaw.toLowerCase();
+
+      if (hasEnvCookies) {
+        if (
+          bodyText.includes("verificación") ||
+          bodyText.includes("verificacion") ||
+          bodyText.includes("verification") ||
+          bodyText.includes("código") ||
+          bodyText.includes("codigo") ||
+          bodyText.includes("sms") ||
+          bodyText.includes("phone call") ||
+          bodyText.includes("two-step") ||
+          bodyText.includes("2-step")
+        ) {
+          throw new Error("BOOKING_AUTH_2FA_REQUIRED");
+        }
+        console.log("[SCRAPER] Cookies loaded but Booking still redirected to login");
+      }
+
       await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
       await humanDelay(page);
       await randomScroll(page);
@@ -198,13 +221,9 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
       await randomScroll(page);
 
       if (page.url().startsWith(loginUrl)) {
-        const bodyTextRaw = (await page.textContent("body")) || "";
-        const bodyText = bodyTextRaw.toLowerCase();
-
         if (
           bodyText.includes("incorrect") ||
           bodyText.includes("wrong password") ||
-          bodyText.includes("credentials") ||
           bodyText.includes("contraseña incorrecta") ||
           bodyText.includes("usuario o contraseña")
         ) {
@@ -214,9 +233,14 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
         if (
           bodyText.includes("unusual activity") ||
           bodyText.includes("captcha") ||
-          bodyText.includes("blocked")
+          bodyText.includes("blocked") ||
+          bodyText.includes("verificación") ||
+          bodyText.includes("verificacion") ||
+          bodyText.includes("verification") ||
+          bodyText.includes("sms") ||
+          bodyText.includes("phone call")
         ) {
-          throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
+          throw new Error("BOOKING_AUTH_2FA_REQUIRED");
         }
 
         throw new Error("BOOKING_AUTH_UNKNOWN_LOGIN_ERROR");
