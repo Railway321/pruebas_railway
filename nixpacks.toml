@@ -1,0 +1,8 @@
+[phases.install]
+cmds = ["cd booking-scraper-service && npm install --include=dev"]
+
+[phases.build]
+cmds = ["cd booking-scraper-service && npx tsc -p ."]
+
+[start]
+cmd = "node booking-scraper-service/dist/index.js"
