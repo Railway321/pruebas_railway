@@ -247,12 +247,15 @@ async function requestTwoFactorCode(
   await selectTwoFactorMethod(page, method);
 
   const sendSelectors = [
-    page.getByRole("button", { name: /enviar|send|continuar|continue/i }),
-    page.getByRole("link", { name: /enviar|send|continuar|continue/i }),
+    page.getByRole("button", { name: /enviar|send|continuar|continue|confirmar|confirm/i }),
+    page.getByRole("link", { name: /enviar|send|continuar|continue|confirmar|confirm/i }),
     page.locator('button:has-text("Enviar")'),
     page.locator('button:has-text("Send")'),
     page.locator('button:has-text("Continuar")'),
     page.locator('button:has-text("Continue")'),
+    page.locator('button:has-text("Confirmar")'),
+    page.locator('button:has-text("Confirm")'),
+    page.locator('text=/enviar código|enviar codigo|send code|send verification/i'),
   ];
 
   for (const locator of sendSelectors) {
@@ -262,6 +265,7 @@ async function requestTwoFactorCode(
     const visible = await first.isVisible().catch(() => false);
     if (visible) {
       await first.click().catch(() => undefined);
+      await page.waitForTimeout(1500);
       break;
     }
   }
