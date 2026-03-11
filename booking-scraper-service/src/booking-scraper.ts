@@ -23,6 +23,54 @@ function getCookiesPath(companyId: string): string {
 
 async function loadCookies(context: BrowserContext, companyId: string) {
   try {
+    const envCookies = process.env.BOOKING_COOKIES_JSON;
+    if (envCookies) {
+      const parsed = JSON.parse(envCookies);
+      const rawCookies = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.cookies)
+        ? parsed.cookies
+        : [];
+      const normalized = rawCookies
+        .map((cookie: any) => {
+          if (!cookie || !cookie.name || !cookie.value) return null;
+
+          const sameSiteMap: Record<string, "Strict" | "Lax" | "None"> = {
+            strict: "Strict",
+            lax: "Lax",
+            none: "None",
+            no_restriction: "None",
+          };
+
+          const expires =
+            typeof cookie.expires === "number"
+              ? cookie.expires
+              : typeof cookie.expirationDate === "number"
+              ? cookie.expirationDate
+              : undefined;
+
+          const sameSiteRaw = typeof cookie.sameSite === "string" ? cookie.sameSite.toLowerCase() : "";
+
+          return {
+            name: String(cookie.name),
+            value: String(cookie.value),
+            domain: cookie.domain || cookie.host || undefined,
+            path: cookie.path || "/",
+            expires,
+            httpOnly: Boolean(cookie.httpOnly),
+            secure: Boolean(cookie.secure),
+            sameSite: sameSiteMap[sameSiteRaw],
+          };
+        })
+        .filter(Boolean);
+
+      if (normalized.length > 0) {
+        await context.addCookies(normalized as any);
+        console.log(`[SCRAPER] Loaded ${normalized.length} cookies from BOOKING_COOKIES_JSON`);
+        return;
+      }
+    }
+
     await ensureCookieDir();
     const data = await fs.readFile(getCookiesPath(companyId), "utf8");
     const cookies = JSON.parse(data);
