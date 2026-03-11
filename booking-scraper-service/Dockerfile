@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/playwright:v1.58.2-jammy
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --include=dev
 
 COPY tsconfig.json ./
 COPY src ./src
