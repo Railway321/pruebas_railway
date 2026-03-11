@@ -5,4 +5,7 @@ cmds = ["cd booking-scraper-service && npm install --include=dev"]
 cmds = ["cd booking-scraper-service && npx tsc -p ."]
 
 [start]
-cmd = "node booking-scraper-service/dist/index.js"
+cmd = "PORT=8080 node booking-scraper-service/dist/index.js"
+
+[variables]
+PORT = "8080"
