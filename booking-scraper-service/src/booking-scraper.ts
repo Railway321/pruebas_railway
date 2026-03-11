@@ -157,7 +157,8 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
           bodyText.includes("incorrect") ||
           bodyText.includes("wrong password") ||
           bodyText.includes("credentials") ||
-          bodyText.includes("usuario")
+          bodyText.includes("contraseña incorrecta") ||
+          bodyText.includes("usuario o contraseña")
         ) {
           throw new Error("BOOKING_AUTH_INVALID_CREDENTIALS");
         }
@@ -176,7 +177,42 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
       await saveCookies(context, companyId);
     }
 
-    await page.goto(`${baseUrl}/reviews`, { waitUntil: "networkidle" });
+    const reviewsUrl = process.env.BOOKING_REVIEWS_URL;
+    if (reviewsUrl) {
+      await page.goto(reviewsUrl, { waitUntil: "networkidle" });
+    } else {
+      const candidatePaths = [
+        "/hotel/hoteladmin/extranet_ng/manage/reviews.html",
+        "/hotel/hoteladmin/extranet_ng/manage/review.html",
+        "/hotel/hoteladmin/extranet_ng/manage/guest_reviews.html",
+        "/reviews",
+      ];
+
+      let navigated = false;
+      for (const path of candidatePaths) {
+        try {
+          await page.goto(`${baseUrl}${path}`, { waitUntil: "networkidle" });
+          navigated = true;
+          break;
+        } catch {
+          // try next path
+        }
+      }
+
+      if (!navigated) {
+        const reviewsLink = page.getByRole("link", { name: /comentarios|reviews|opiniones/i });
+        if ((await reviewsLink.count().catch(() => 0)) > 0) {
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: "networkidle" }),
+            reviewsLink.first().click(),
+          ]);
+        } else {
+          throw new Error(
+            "No se pudo navegar a la pagina de comentarios. Configura BOOKING_REVIEWS_URL en Railway."
+          );
+        }
+      }
+    }
     await humanDelay(page);
     await randomScroll(page);
 
