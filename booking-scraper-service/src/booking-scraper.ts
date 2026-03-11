@@ -182,13 +182,18 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
 
     const exportCandidates = [
       page.getByRole("button", { name: /exportar|export/i }),
+      page.getByRole("button", { name: /descargar comentarios de los clientes/i }),
       page.getByRole("link", { name: /exportar|export/i }),
+      page.getByRole("link", { name: /descargar comentarios de los clientes/i }),
       page.locator('[data-testid*="export"]'),
       page.locator('button:has-text("Exportar")'),
       page.locator('button:has-text("Export")'),
+      page.locator('button:has-text("Descargar comentarios de los clientes")'),
       page.locator('a:has-text("Exportar")'),
       page.locator('a:has-text("Export")'),
+      page.locator('a:has-text("Descargar comentarios de los clientes")'),
       page.locator('text=/exportar|export/i'),
+      page.locator('text=/descargar comentarios de los clientes/i'),
     ];
 
     let exportButton = null as null | ReturnType<typeof page.locator>;
