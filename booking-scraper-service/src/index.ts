@@ -2,6 +2,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { randomUUID } from "node:crypto";
 import {
   createBookingSession,
+  describeAuthState,
   ensureBookingAuthenticated,
   persistCookies,
   scrapeReviewsWithSession,
@@ -33,6 +34,14 @@ const twoFactorSessions = new Map<
 >();
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
+
+async function logAuthState(page: BookingSession["page"], contextLabel: string) {
+  const state = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] ${contextLabel} | state=${state.state} | title=${state.title} | url=${state.url}`
+  );
+  return state;
+}
 
 function requireApiKey(req: Request, res: Response, next: NextFunction) {
   if (!requiredApiKey) {
@@ -206,6 +215,7 @@ app.post(
     }
 
     try {
+      await logAuthState(entry.session.page, "Before send-2fa");
       if (phoneLabel) {
         await selectPhoneOption(entry.session.page, phoneLabel);
       }
@@ -254,6 +264,25 @@ app.post(
     }
 
     try {
+      let state = await logAuthState(entry.session.page, "Before select-2fa-method");
+      if (state.state !== "two_factor") {
+        for (let i = 0; i < 5; i++) {
+          await entry.session.page.waitForTimeout(1000);
+          state = await logAuthState(entry.session.page, `Waiting 2FA (${i + 1}/5)`);
+          if (state.state === "two_factor") break;
+        }
+      }
+
+      if (state.state !== "two_factor") {
+        return res.status(409).json({
+          success: false,
+          error: "2FA_NOT_READY",
+          state: state.state,
+          url: state.url,
+          title: state.title,
+        });
+      }
+
       const normalizedMethod = method === "call" ? "call" : "sms";
       await selectTwoFactorMethod(entry.session.page, normalizedMethod);
       entry.selectedMethod = normalizedMethod;

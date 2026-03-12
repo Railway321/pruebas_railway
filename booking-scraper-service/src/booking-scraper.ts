@@ -400,6 +400,51 @@ async function looksLikeTwoFactor(page: Page): Promise<boolean> {
   return detectTwoFactor(bodyText);
 }
 
+export async function describeAuthState(page: Page): Promise<{
+  state: "two_factor" | "login_username" | "login_password" | "login_full" | "unknown";
+  url: string;
+  title: string;
+}> {
+  const usernameSelector = 'input[name="username"], input[type="email"]';
+  const passwordSelector = 'input[type="password"]';
+  const [usernameInput, passwordInput] = await Promise.all([
+    page.$(usernameSelector),
+    page.$(passwordSelector),
+  ]);
+
+  if (await looksLikeTwoFactor(page)) {
+    return { state: "two_factor", url: page.url(), title: await page.title() };
+  }
+
+  if (usernameInput && passwordInput) {
+    return { state: "login_full", url: page.url(), title: await page.title() };
+  }
+
+  if (usernameInput && !passwordInput) {
+    return { state: "login_username", url: page.url(), title: await page.title() };
+  }
+
+  if (!usernameInput && passwordInput) {
+    return { state: "login_password", url: page.url(), title: await page.title() };
+  }
+
+  return { state: "unknown", url: page.url(), title: await page.title() };
+}
+
+async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): Promise<boolean> {
+  for (const locator of locators) {
+    const count = await locator.count().catch(() => 0);
+    if (count === 0) continue;
+    const first = locator.first();
+    const visible = await first.isVisible().catch(() => false);
+    if (visible) {
+      await first.click().catch(() => undefined);
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function ensureBookingAuthenticated(session: BookingSession): Promise<AuthStatus> {
   const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
@@ -436,26 +481,67 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   const usernameSelector = 'input[name="username"], input[type="email"]';
   const passwordSelector = 'input[type="password"]';
-  const submitSelector = 'button[type="submit"], button[data-ga-label="login-button"]';
+  const submitLocators = [
+    page.locator('button[type="submit"]'),
+    page.locator('button[data-ga-label="login-button"]'),
+    page.locator('button:has-text("Siguiente")'),
+    page.locator('button:has-text("Next")'),
+    page.locator('button:has-text("Continuar")'),
+    page.locator('button:has-text("Continue")'),
+    page.locator('button:has-text("Iniciar sesión")'),
+    page.locator('button:has-text("Sign in")'),
+  ];
+
+  const initialState = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Auth state after login load: ${initialState.state} | ${initialState.title} | ${initialState.url}`
+  );
 
   const usernameInput = await page.$(usernameSelector);
   const passwordInput = await page.$(passwordSelector);
-  const submitButton = await page.$(submitSelector);
 
-  if (!usernameInput || !passwordInput || !submitButton) {
+  if (usernameInput && !passwordInput) {
+    for (const char of username) {
+      await usernameInput.type(char, { delay: Math.random() * 100 + 50 });
+    }
+    await humanDelay(page);
+    await clickFirstVisible(submitLocators);
+    await humanDelay(page, 1500, 2500);
+    await page
+      .waitForSelector(passwordSelector, { timeout: 15000 })
+      .catch(() => undefined);
+  }
+
+  const passwordInputAfter = await page.$(passwordSelector);
+  const usernameInputAfter = await page.$(usernameSelector);
+
+  if (!passwordInputAfter) {
+    const state = await describeAuthState(page);
+    console.log(
+      `[SCRAPER] Auth state before password entry: ${state.state} | ${state.title} | ${state.url}`
+    );
+    if (state.state === "two_factor") {
+      const phoneOptions = await extractPhoneOptions(page);
+      return { status: "2fa_required", phoneOptions };
+    }
     return "unknown";
   }
 
-  for (const char of username) {
-    await usernameInput.type(char, { delay: Math.random() * 100 + 50 });
+  if (usernameInputAfter) {
+    const currentValue = await usernameInputAfter.inputValue().catch(() => "");
+    if (!currentValue) {
+      for (const char of username) {
+        await usernameInputAfter.type(char, { delay: Math.random() * 100 + 50 });
+      }
+      await humanDelay(page);
+    }
   }
-  await humanDelay(page);
 
   for (const char of password) {
-    await passwordInput.type(char, { delay: Math.random() * 100 + 50 });
+    await passwordInputAfter.type(char, { delay: Math.random() * 100 + 50 });
   }
   await humanDelay(page);
-  await submitButton.click();
+  await clickFirstVisible(submitLocators);
 
   await humanDelay(page, 5000, 8000);
   await randomScroll(page);
