@@ -746,6 +746,7 @@ async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): 
 export async function ensureBookingAuthenticated(session: BookingSession): Promise<AuthStatus> {
   const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
+  const loginIdentifier = process.env.BOOKING_EXTRANET_EMAIL || username;
   const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
   const loginUrl = getEnvOrThrow("BOOKING_LOGIN_URL");
   const hasEnvCookies = Boolean(process.env.BOOKING_COOKIES_JSON);
@@ -801,7 +802,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   if (hasUsernameVisible && !hasPasswordVisible) {
     const usernameInput = page.locator(usernameSelector).first();
     await usernameInput.fill("").catch(() => undefined);
-    await usernameInput.type(username, { delay: Math.random() * 80 + 30 });
+    await usernameInput.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
     await logInputValueLengths(page, "after username fill");
     await humanDelay(page);
     const clicked = await clickFirstVisible(submitLocators);
@@ -834,7 +835,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     const currentValue = await usernameInputAfter.inputValue().catch(() => "");
     if (!currentValue) {
       await usernameInputAfter.fill("").catch(() => undefined);
-      await usernameInputAfter.type(username, { delay: Math.random() * 80 + 30 });
+      await usernameInputAfter.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
       await humanDelay(page);
     }
   }
