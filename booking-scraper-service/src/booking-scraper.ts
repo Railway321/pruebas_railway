@@ -235,6 +235,9 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   const extractFromFrame = async (frame: Frame): Promise<PhoneOption[]> => {
     const options: PhoneOption[] = [];
     const selectLocator = frame.locator("select");
+    const comboboxLocator = frame.locator(
+      '[role="combobox"], [aria-haspopup="listbox"], [aria-expanded]'
+    );
     const selectCount = await selectLocator.count().catch(() => 0);
     for (let i = 0; i < selectCount; i++) {
       const selectEl = selectLocator.nth(i);
@@ -248,15 +251,39 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
       }
     }
 
-    const listboxOptions = frame.locator('[role="listbox"] [role="option"], [role="listbox"] li');
-    const listCount = await listboxOptions.count().catch(() => 0);
-    for (let i = 0; i < listCount; i++) {
-      const el = listboxOptions.nth(i);
-      const text = await el.textContent().catch(() => null);
-      const label = (text ?? "").trim();
-      const visible = await el.isVisible().catch(() => false);
-      if (visible) {
-        addOption(options, label, `phone_list_${i}`);
+    const comboboxCount = await comboboxLocator.count().catch(() => 0);
+    for (let i = 0; i < comboboxCount; i++) {
+      const combobox = comboboxLocator.nth(i);
+      const visible = await combobox.isVisible().catch(() => false);
+      if (!visible) continue;
+      await combobox.click().catch(() => undefined);
+      await frame.page().waitForTimeout(300);
+      const listboxOptions = frame.locator('[role="listbox"] [role="option"], [role="listbox"] li');
+      const listCount = await listboxOptions.count().catch(() => 0);
+      for (let j = 0; j < listCount; j++) {
+        const el = listboxOptions.nth(j);
+        const text = await el.textContent().catch(() => null);
+        const label = (text ?? "").trim();
+        const optVisible = await el.isVisible().catch(() => false);
+        if (optVisible) {
+          addOption(options, label, `phone_list_${i}_${j}`);
+        }
+      }
+      await frame.page().keyboard.press("Escape").catch(() => undefined);
+      if (options.length > 0) break;
+    }
+
+    if (options.length === 0) {
+      const listboxOptions = frame.locator('[role="listbox"] [role="option"], [role="listbox"] li');
+      const listCount = await listboxOptions.count().catch(() => 0);
+      for (let i = 0; i < listCount; i++) {
+        const el = listboxOptions.nth(i);
+        const text = await el.textContent().catch(() => null);
+        const label = (text ?? "").trim();
+        const visible = await el.isVisible().catch(() => false);
+        if (visible) {
+          addOption(options, label, `phone_list_${i}`);
+        }
       }
     }
 
