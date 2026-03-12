@@ -80,7 +80,8 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
       const session = await createBookingSession(companyId);
       const authStatus = await ensureBookingAuthenticated(session);
 
-      if (authStatus === "2fa_required") {
+      const isTwoFactor = typeof authStatus === "object" && authStatus.status === "2fa_required";
+      if (isTwoFactor) {
         const sessionId = randomUUID();
         const expiresAt = Date.now() + SESSION_TTL_MS;
         twoFactorSessions.set(sessionId, {
@@ -92,6 +93,7 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
           type: "two_factor",
           sessionId,
           expiresAt,
+          phoneOptions: (authStatus as any).phoneOptions || [],
         } as const;
       }
 
@@ -115,6 +117,7 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         requiresTwoFactor: true,
         sessionId: result.sessionId,
         expiresAt: result.expiresAt,
+        phoneOptions: result.phoneOptions,
       });
     }
 
@@ -160,7 +163,7 @@ app.post(
   requireApiKey,
   async (req: Request, res: Response) => {
     const companyId = (req.params.companyId || "").trim();
-    const { sessionId, code, method } = req.body || {};
+    const { sessionId, code, method, phoneLabel } = req.body || {};
 
     if (!companyId || !sessionId || !code) {
       return res.status(400).json({
@@ -191,7 +194,8 @@ app.post(
         const status = await submitTwoFactorCode(
           entry.session,
           String(code),
-          method === "call" ? "call" : "sms"
+          method === "call" ? "call" : "sms",
+          phoneLabel
         );
         if (status !== "ok") {
           return { type: "invalid", status } as const;

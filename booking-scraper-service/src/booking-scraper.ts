@@ -131,9 +131,14 @@ export interface BookingSession {
   page: Page;
 }
 
+export interface TwoFactorAuthResult {
+  status: "2fa_required";
+  phoneOptions: PhoneOption[];
+}
+
 export type AuthStatus =
   | "ok"
-  | "2fa_required"
+  | TwoFactorAuthResult
   | "invalid_credentials"
   | "security_block"
   | "unknown";
@@ -209,6 +214,108 @@ function detectTwoFactor(bodyText: string): boolean {
     bodyText.includes("two-step") ||
     bodyText.includes("2-step")
   );
+}
+
+export interface PhoneOption {
+  id: string;
+  label: string;
+}
+
+async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
+  const options: PhoneOption[] = [];
+
+  const phoneSelectors = [
+    page.locator('input[name*="phone"]'),
+    page.locator('input[type="tel"]'),
+    page.locator('input[autocomplete="tel"]'),
+    page.locator('label:has(input[type="radio"]):not(:has-text(/sms|call|llamada|texto/i))'),
+    page.locator('div:has(input[type="radio"])'),
+    page.locator('li:has(input[type="radio"])'),
+    page.locator('label:has(input[type="checkbox"]):not(:has-text(/sms|call|llamada|texto/i))'),
+  ];
+
+  for (const selector of phoneSelectors) {
+    const count = await selector.count().catch(() => 0);
+    if (count === 0) continue;
+
+    for (let i = 0; i < count; i++) {
+      const el = selector.nth(i);
+      const text = await el.textContent().catch(() => "");
+      const label = text.trim();
+      if (label && label.length > 3) {
+        const id = `phone_${i}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
+        if (!options.find(o => o.label === label)) {
+          options.push({ id, label });
+        }
+      }
+    }
+  }
+
+  if (options.length === 0) {
+    const bodyText = (await page.textContent("body")).toLowerCase();
+    const phoneRegex = /\+?\d[\d\s*]{5,20}/g;
+    const matches = bodyText.match(phoneRegex);
+    if (matches) {
+      let idx = 0;
+      for (const match of matches) {
+        const cleaned = match.replace(/\s/g, "").replace(/\*/g, "X");
+        if (cleaned.length >= 7) {
+          options.push({
+            id: `phone_${idx++}`,
+            label: match.trim()
+          });
+        }
+      }
+    }
+  }
+
+  return options;
+}
+
+async function selectPhoneOption(
+  page: Page,
+  phoneLabel: string
+): Promise<boolean> {
+  const normalizedLabel = phoneLabel.toLowerCase().replace(/\s/g, "");
+  
+  const phoneLocators = [
+    page.locator(`label:has-text("${phoneLabel}")`),
+    page.locator(`text=/${phoneLabel}/i`),
+    page.locator(`div:has-text("${phoneLabel}")`),
+    page.locator(`li:has-text("${phoneLabel}")`),
+    page.locator(`label:has(input[type="radio"])`).filter({ hasText: new RegExp(phoneLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }),
+  ];
+
+  for (const locator of phoneLocators) {
+    const count = await locator.count().catch(() => 0);
+    if (count === 0) continue;
+    for (let i = 0; i < count; i++) {
+      const el = locator.nth(i);
+      const visible = await el.isVisible().catch(() => false);
+      if (visible) {
+        await el.click().catch(() => undefined);
+        await page.waitForTimeout(500);
+        return true;
+      }
+    }
+  }
+
+  const allRadioLabels = page.locator('label:has(input[type="radio"]), li:has(input[type="radio"])');
+  const radioCount = await allRadioLabels.count().catch(() => 0);
+  for (let i = 0; i < radioCount; i++) {
+    const el = allRadioLabels.nth(i);
+    const text = await el.textContent().catch(() => "");
+    if (text && text.toLowerCase().replace(/\s/g, "").includes(normalizedLabel.replace(/\*/g, "X"))) {
+      const visible = await el.isVisible().catch(() => false);
+      if (visible) {
+        await el.click().catch(() => undefined);
+        await page.waitForTimeout(500);
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 async function selectTwoFactorMethod(
@@ -318,7 +425,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   if (hasEnvCookies) {
     if (detectTwoFactor(bodyText)) {
       await requestTwoFactorCode(page, "sms");
-      return "2fa_required";
+      const phoneOptions = await extractPhoneOptions(page);
+      return { status: "2fa_required", phoneOptions };
     }
     console.log("[SCRAPER] Cookies loaded but Booking still redirected to login");
   }
@@ -355,7 +463,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   if (await looksLikeTwoFactor(page)) {
     await requestTwoFactorCode(page, "sms");
-    return "2fa_required";
+    const phoneOptions = await extractPhoneOptions(page);
+    return { status: "2fa_required", phoneOptions };
   }
 
   if (page.url().startsWith(loginUrl) || (await looksLikeLogin(page))) {
@@ -389,12 +498,17 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 export async function submitTwoFactorCode(
   session: BookingSession,
   code: string,
-  method: "sms" | "call" = "sms"
+  method: "sms" | "call" = "sms",
+  phoneLabel?: string
 ): Promise<TwoFactorStatus> {
   const { page } = session;
   if (!code.trim()) return "invalid_code";
 
   await requestTwoFactorCode(page, method);
+
+  if (phoneLabel) {
+    await selectPhoneOption(page, phoneLabel);
+  }
 
   const codeSelectors = [
     'input[autocomplete="one-time-code"]',
