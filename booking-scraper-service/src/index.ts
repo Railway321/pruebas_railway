@@ -215,7 +215,16 @@ app.post(
     }
 
     try {
-      await logAuthState(entry.session.page, "Before send-2fa");
+      const state = await logAuthState(entry.session.page, "Before send-2fa");
+      if (state.state !== "two_factor") {
+        return res.status(409).json({
+          success: false,
+          error: "2FA_NOT_READY",
+          state: state.state,
+          url: state.url,
+          title: state.title,
+        });
+      }
       if (phoneLabel) {
         await selectPhoneOption(entry.session.page, phoneLabel);
       }
@@ -287,7 +296,14 @@ app.post(
       await selectTwoFactorMethod(entry.session.page, normalizedMethod);
       entry.selectedMethod = normalizedMethod;
       const phoneOptions = await extractPhoneOptions(entry.session.page);
-      res.json({ success: true, phoneOptions });
+      console.log(
+        `[SCRAPER] 2FA method confirmed (${normalizedMethod}). Phone options: ${phoneOptions.length}`
+      );
+      res.json({
+        success: true,
+        phoneOptions,
+        authState: { state: state.state, url: state.url, title: state.title },
+      });
     } catch (error: any) {
       console.error("[SCRAPER] Error en /select-2fa-method:", error);
       res.status(500).json({
