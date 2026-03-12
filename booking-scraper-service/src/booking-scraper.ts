@@ -222,9 +222,30 @@ async function hasVisibleSelector(page: Page, selector: string): Promise<boolean
   return locator.isVisible().catch(() => false);
 }
 
+async function logVisibleInputs(page: Page, context: string): Promise<void> {
+  try {
+    const inputs = await page
+      .evaluate(() =>
+        Array.from(document.querySelectorAll("input"))
+          .map((el) => ({
+            name: el.getAttribute("name") || "",
+            type: el.getAttribute("type") || "",
+            id: el.getAttribute("id") || "",
+            placeholder: el.getAttribute("placeholder") || "",
+          }))
+          .filter((el) => el.name || el.type || el.id || el.placeholder)
+      )
+      .catch(() => [] as Array<{ name: string; type: string; id: string; placeholder: string }>);
+
+    console.log(`[SCRAPER] Visible inputs (${context}):`, inputs);
+  } catch (error) {
+    console.log(`[SCRAPER] Failed to log inputs (${context}):`, error);
+  }
+}
+
 async function hasLoginFields(page: Page): Promise<boolean> {
-  const usernameSelector = 'input[name="username"], input[type="email"]';
-  const passwordSelector = 'input[type="password"]';
+  const usernameSelector = 'input[name="username"], input[type="email"], input[name="identifier"], input[id*="username"], input[id*="email"]';
+  const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
   const [hasUsername, hasPassword] = await Promise.all([
     hasVisibleSelector(page, usernameSelector),
     hasVisibleSelector(page, passwordSelector),
@@ -756,15 +777,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   console.log(
     `[SCRAPER] Auth state after login load: ${initialState.state} | ${initialState.title} | ${initialState.url}`
   );
+  await logVisibleInputs(page, "after login load");
 
   const hasUsernameVisible = await hasVisibleSelector(page, usernameSelector);
   const hasPasswordVisible = await hasVisibleSelector(page, passwordSelector);
 
   if (hasUsernameVisible && !hasPasswordVisible) {
     const usernameInput = page.locator(usernameSelector).first();
-    for (const char of username) {
-      await usernameInput.type(char, { delay: Math.random() * 100 + 50 });
-    }
+    await usernameInput.fill("").catch(() => undefined);
+    await usernameInput.type(username, { delay: Math.random() * 80 + 30 });
     await humanDelay(page);
     await clickFirstVisible(submitLocators);
     await humanDelay(page, 1500, 2500);
@@ -781,6 +802,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     console.log(
       `[SCRAPER] Auth state before password entry: ${state.state} | ${state.title} | ${state.url}`
     );
+    await logVisibleInputs(page, "before password entry");
     if (state.state === "two_factor") {
       return { status: "2fa_required", phoneOptions: [] };
     }
@@ -791,17 +813,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     const usernameInputAfter = page.locator(usernameSelector).first();
     const currentValue = await usernameInputAfter.inputValue().catch(() => "");
     if (!currentValue) {
-      for (const char of username) {
-        await usernameInputAfter.type(char, { delay: Math.random() * 100 + 50 });
-      }
+      await usernameInputAfter.fill("").catch(() => undefined);
+      await usernameInputAfter.type(username, { delay: Math.random() * 80 + 30 });
       await humanDelay(page);
     }
   }
 
   const passwordInputAfter = page.locator(passwordSelector).first();
-  for (const char of password) {
-    await passwordInputAfter.type(char, { delay: Math.random() * 100 + 50 });
-  }
+  await passwordInputAfter.fill("").catch(() => undefined);
+  await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await humanDelay(page);
   await clickFirstVisible(submitLocators);
 
@@ -815,6 +835,11 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   if (page.url().startsWith(loginUrl) || (await looksLikeLogin(page))) {
     const updatedBodyRaw = (await page.textContent("body")) || "";
     const updatedBody = updatedBodyRaw.toLowerCase();
+
+    await logVisibleInputs(page, "after login submit");
+    const invalidPath = `/tmp/booking-login-invalid-${Date.now()}.png`;
+    await page.screenshot({ path: invalidPath, fullPage: true }).catch(() => undefined);
+    console.log(`[SCRAPER] Saved login screenshot: ${invalidPath}`);
 
     if (
       updatedBody.includes("incorrect") ||
