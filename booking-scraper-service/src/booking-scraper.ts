@@ -225,6 +225,13 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   const isPhoneLike = (value: string) =>
     /(\+?\d[\d\s*]{3,}|\*{2,}\s*\d{2,})/.test(value);
 
+  const addOption = (options: PhoneOption[], label: string, idPrefix: string) => {
+    if (!label || label.length <= 3 || !isPhoneLike(label)) return;
+    if (options.find((o) => o.label === label)) return;
+    const id = `${idPrefix}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
+    options.push({ id, label });
+  };
+
   const extractFromFrame = async (frame: Frame): Promise<PhoneOption[]> => {
     const options: PhoneOption[] = [];
     const selectLocator = frame.locator("select");
@@ -237,14 +244,19 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
         const optionEl = optionLocator.nth(j);
         const text = await optionEl.textContent().catch(() => null);
         const label = (text ?? "").trim();
-        if (label && label.length > 3 && isPhoneLike(label)) {
-          const id = `phone_select_${i}_${j}_${Buffer.from(label)
-            .toString("base64")
-            .slice(0, 12)}`;
-          if (!options.find((o) => o.label === label)) {
-            options.push({ id, label });
-          }
-        }
+        addOption(options, label, `phone_select_${i}_${j}`);
+      }
+    }
+
+    const listboxOptions = frame.locator('[role="listbox"] [role="option"], [role="listbox"] li');
+    const listCount = await listboxOptions.count().catch(() => 0);
+    for (let i = 0; i < listCount; i++) {
+      const el = listboxOptions.nth(i);
+      const text = await el.textContent().catch(() => null);
+      const label = (text ?? "").trim();
+      const visible = await el.isVisible().catch(() => false);
+      if (visible) {
+        addOption(options, label, `phone_list_${i}`);
       }
     }
 
@@ -266,14 +278,25 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
         const el = selector.nth(i);
         const text = await el.textContent().catch(() => null);
         const label = (text ?? "").trim();
-        if (label && label.length > 3 && isPhoneLike(label)) {
-          const id = `phone_${i}_${Buffer.from(label)
-            .toString("base64")
-            .slice(0, 12)}`;
-          if (!options.find((o) => o.label === label)) {
-            options.push({ id, label });
-          }
+        addOption(options, label, `phone_${i}`);
+      }
+    }
+
+    if (options.length === 0) {
+      const textLocator = frame.locator(
+        'button, label, div, span, li, p, a, [role="option"], [role="button"], [role="radio"]'
+      );
+      const textCount = await textLocator.count().catch(() => 0);
+      for (let i = 0; i < Math.min(textCount, 200); i++) {
+        const el = textLocator.nth(i);
+        const visible = await el.isVisible().catch(() => false);
+        if (!visible) continue;
+        const text = await el.textContent().catch(() => null);
+        const label = (text ?? "").trim();
+        if (label && label.includes("*") && isPhoneLike(label)) {
+          addOption(options, label, `phone_text_${i}`);
         }
+        if (options.length >= 10) break;
       }
     }
 
