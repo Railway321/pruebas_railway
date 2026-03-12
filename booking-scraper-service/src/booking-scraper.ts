@@ -829,6 +829,61 @@ async function waitForAuthProgress(page: Page, label: string): Promise<{
   return describeAuthState(page);
 }
 
+async function completeLoginAfterOtp(page: Page): Promise<void> {
+  const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
+  const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
+  const loginEmail = process.env.BOOKING_EXTRANET_EMAIL;
+  const usernameSelector = 'input[name="username"], input[type="email"], input[name="identifier"], input[id*="username"], input[id*="email"]';
+  const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
+  const submitLocators = [
+    page.getByRole("button", { name: /siguiente/i }),
+    page.getByRole("button", { name: /next/i }),
+    page.getByRole("button", { name: /continuar/i }),
+    page.getByRole("button", { name: /continue/i }),
+    page.getByRole("button", { name: /iniciar sesión/i }),
+    page.getByRole("button", { name: /sign in/i }),
+    page.locator('button[type="submit"]'),
+    page.locator('button[data-ga-label="login-button"]'),
+  ];
+
+  let state = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Completing login after OTP from state=${state.state} | ${state.title} | ${state.url}`
+  );
+
+  if (state.state === "login_username" || state.state === "login_full") {
+    const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
+    const usernameInput = page.locator(usernameSelector).first();
+    await usernameInput.fill("").catch(() => undefined);
+    await usernameInput.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
+    await logInputValueLengths(page, "after otp username fill");
+  }
+
+  if (state.state === "login_password" || state.state === "login_full") {
+    const passwordInput = page.locator(passwordSelector).first();
+    await passwordInput.fill("").catch(() => undefined);
+    await passwordInput.type(password, { delay: Math.random() * 80 + 30 });
+    await logInputValueLengths(page, "after otp password fill");
+  }
+
+  if (
+    state.state === "login_username" ||
+    state.state === "login_password" ||
+    state.state === "login_full"
+  ) {
+    await humanDelay(page, 1500, 2500);
+    const clicked = await clickFirstVisible(submitLocators);
+    if (!clicked) {
+      await page.keyboard.press("Enter").catch(() => undefined);
+    }
+    await humanDelay(page, 3000, 5000);
+    state = await waitForAuthProgress(page, "After OTP login continuation");
+    console.log(
+      `[SCRAPER] OTP login continuation resolved to ${state.state} | ${state.url}`
+    );
+  }
+}
+
 export async function ensureBookingAuthenticated(session: BookingSession): Promise<AuthStatus> {
   const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
@@ -1076,9 +1131,22 @@ export async function submitTwoFactorCode(
   if (
     stateAfterBaseLoad.state === "login_username" ||
     stateAfterBaseLoad.state === "login_password" ||
-    stateAfterBaseLoad.state === "login_full" ||
-    stateAfterBaseLoad.state === "two_factor" ||
-    stateAfterBaseLoad.state === "two_factor_email"
+    stateAfterBaseLoad.state === "login_full"
+  ) {
+    await completeLoginAfterOtp(page);
+  }
+
+  const finalStateAfterOtp = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Final auth state after OTP flow: ${finalStateAfterOtp.state} | ${finalStateAfterOtp.title} | ${finalStateAfterOtp.url}`
+  );
+
+  if (
+    finalStateAfterOtp.state === "login_username" ||
+    finalStateAfterOtp.state === "login_password" ||
+    finalStateAfterOtp.state === "login_full" ||
+    finalStateAfterOtp.state === "two_factor" ||
+    finalStateAfterOtp.state === "two_factor_email"
   ) {
     return "still_required";
   }
