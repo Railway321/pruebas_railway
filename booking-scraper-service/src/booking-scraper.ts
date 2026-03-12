@@ -1059,6 +1059,30 @@ export async function submitTwoFactorCode(
     return "still_required";
   }
 
+  const stateAfterCode = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Auth state after 2FA code submit: ${stateAfterCode.state} | ${stateAfterCode.title} | ${stateAfterCode.url}`
+  );
+
+  const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+  await humanDelay(page, 2000, 4000);
+
+  const stateAfterBaseLoad = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Auth state after returning to extranet: ${stateAfterBaseLoad.state} | ${stateAfterBaseLoad.title} | ${stateAfterBaseLoad.url}`
+  );
+
+  if (
+    stateAfterBaseLoad.state === "login_username" ||
+    stateAfterBaseLoad.state === "login_password" ||
+    stateAfterBaseLoad.state === "login_full" ||
+    stateAfterBaseLoad.state === "two_factor" ||
+    stateAfterBaseLoad.state === "two_factor_email"
+  ) {
+    return "still_required";
+  }
+
   return "ok";
 }
 
@@ -1067,6 +1091,8 @@ export async function scrapeReviewsWithSession(
 ): Promise<ScrapeResult> {
   const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
   const { page } = session;
+
+  console.log(`[SCRAPER] Starting review scrape from: ${page.url()}`);
 
   const reviewsUrl = process.env.BOOKING_REVIEWS_URL;
   if (reviewsUrl) {
@@ -1107,6 +1133,12 @@ export async function scrapeReviewsWithSession(
   await humanDelay(page);
   await randomScroll(page);
 
+  console.log(`[SCRAPER] Review page after navigation: ${page.url()}`);
+  const reviewAuthState = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Auth state before export lookup: ${reviewAuthState.state} | ${reviewAuthState.title} | ${reviewAuthState.url}`
+  );
+
   const exportCandidates = [
     page.getByRole("button", { name: /exportar|export/i }),
     page.getByRole("button", { name: /descargar comentarios de los clientes/i }),
@@ -1136,6 +1168,9 @@ export async function scrapeReviewsWithSession(
   }
 
   if (!exportButton) {
+    const missingExportPath = `/tmp/booking-reviews-missing-export-${Date.now()}.png`;
+    await page.screenshot({ path: missingExportPath, fullPage: true }).catch(() => undefined);
+    console.log(`[SCRAPER] Saved missing export screenshot: ${missingExportPath}`);
     throw new Error("Botón de exportación de reseñas no encontrado en Booking");
   }
 
