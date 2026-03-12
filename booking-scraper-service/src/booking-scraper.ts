@@ -243,6 +243,22 @@ async function logVisibleInputs(page: Page, context: string): Promise<void> {
   }
 }
 
+async function logInputValueLengths(page: Page, context: string): Promise<void> {
+  try {
+    const usernameSelector = 'input[name="username"], input[name="identifier"], input[type="email"], input[id*="username"], input[id*="email"]';
+    const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
+    const [usernameValue, passwordValue] = await Promise.all([
+      page.locator(usernameSelector).first().inputValue().catch(() => ""),
+      page.locator(passwordSelector).first().inputValue().catch(() => ""),
+    ]);
+    console.log(
+      `[SCRAPER] Input lengths (${context}): username=${usernameValue.length} password=${passwordValue.length}`
+    );
+  } catch (error) {
+    console.log(`[SCRAPER] Failed to read input lengths (${context})`);
+  }
+}
+
 async function hasLoginFields(page: Page): Promise<boolean> {
   const usernameSelector = 'input[name="username"], input[type="email"], input[name="identifier"], input[id*="username"], input[id*="email"]';
   const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
@@ -763,14 +779,14 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   const usernameSelector = 'input[name="username"], input[type="email"]';
   const passwordSelector = 'input[type="password"]';
   const submitLocators = [
+    page.getByRole("button", { name: /siguiente/i }),
+    page.getByRole("button", { name: /next/i }),
+    page.getByRole("button", { name: /continuar/i }),
+    page.getByRole("button", { name: /continue/i }),
+    page.getByRole("button", { name: /iniciar sesión/i }),
+    page.getByRole("button", { name: /sign in/i }),
     page.locator('button[type="submit"]'),
     page.locator('button[data-ga-label="login-button"]'),
-    page.locator('button:has-text("Siguiente")'),
-    page.locator('button:has-text("Next")'),
-    page.locator('button:has-text("Continuar")'),
-    page.locator('button:has-text("Continue")'),
-    page.locator('button:has-text("Iniciar sesión")'),
-    page.locator('button:has-text("Sign in")'),
   ];
 
   const initialState = await describeAuthState(page);
@@ -786,8 +802,12 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     const usernameInput = page.locator(usernameSelector).first();
     await usernameInput.fill("").catch(() => undefined);
     await usernameInput.type(username, { delay: Math.random() * 80 + 30 });
+    await logInputValueLengths(page, "after username fill");
     await humanDelay(page);
-    await clickFirstVisible(submitLocators);
+    const clicked = await clickFirstVisible(submitLocators);
+    if (!clicked) {
+      await page.keyboard.press("Enter").catch(() => undefined);
+    }
     await humanDelay(page, 1500, 2500);
     await page
       .waitForSelector(passwordSelector, { timeout: 15000 })
@@ -822,8 +842,12 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   const passwordInputAfter = page.locator(passwordSelector).first();
   await passwordInputAfter.fill("").catch(() => undefined);
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
+  await logInputValueLengths(page, "after password fill");
   await humanDelay(page);
-  await clickFirstVisible(submitLocators);
+  const clicked = await clickFirstVisible(submitLocators);
+  if (!clicked) {
+    await page.keyboard.press("Enter").catch(() => undefined);
+  }
 
   await humanDelay(page, 5000, 8000);
   await randomScroll(page);
@@ -839,6 +863,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     await logVisibleInputs(page, "after login submit");
     const invalidPath = `/tmp/booking-login-invalid-${Date.now()}.png`;
     await page.screenshot({ path: invalidPath, fullPage: true }).catch(() => undefined);
+    await fs.writeFile("/tmp/booking-login-last.txt", invalidPath).catch(() => undefined);
     console.log(`[SCRAPER] Saved login screenshot: ${invalidPath}`);
 
     if (

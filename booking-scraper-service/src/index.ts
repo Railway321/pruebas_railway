@@ -36,6 +36,7 @@ const twoFactorSessions = new Map<
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 let lastTwoFactorScreenshotPath: string | null = null;
+let lastLoginScreenshotPath: string | null = null;
 
 async function logAuthState(page: BookingSession["page"], contextLabel: string) {
   const state = await describeAuthState(page);
@@ -106,6 +107,33 @@ app.get("/debug/last-2fa-screenshot", requireApiKey, async (_req, res) => {
     res.status(500).json({
       success: false,
       error: error?.message || "No se pudo leer la captura",
+    });
+  }
+});
+
+app.get("/debug/last-login-screenshot", requireApiKey, async (_req, res) => {
+  try {
+    let screenshotPath = lastLoginScreenshotPath;
+    if (!screenshotPath) {
+      screenshotPath = (await fs.readFile("/tmp/booking-login-last.txt", "utf8").catch(() => "")).trim();
+    }
+    if (!screenshotPath) {
+      return res.status(404).json({
+        success: false,
+        error: "No hay captura de login disponible",
+      });
+    }
+    const data = await fs.readFile(screenshotPath);
+    res.json({
+      success: true,
+      path: screenshotPath,
+      contentType: "image/png",
+      base64: data.toString("base64"),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || "No se pudo leer la captura de login",
     });
   }
 });
