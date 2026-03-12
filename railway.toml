@@ -1,0 +1,7 @@
+[build]
+  builder = "nixpacks"
+  buildCommand = "cd booking-scraper-service && npm install"
+
+[deploy]
+  startCommand = "cd booking-scraper-service && npm run start"
+  restartPolicyType = "on_failure"
