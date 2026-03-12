@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from "express";
+import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import {
   createBookingSession,
@@ -34,6 +35,7 @@ const twoFactorSessions = new Map<
 >();
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
+let lastTwoFactorScreenshotPath: string | null = null;
 
 async function logAuthState(page: BookingSession["page"], contextLabel: string) {
   const state = await describeAuthState(page);
@@ -82,6 +84,30 @@ setInterval(cleanupExpiredSessions, 60 * 1000).unref();
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
+});
+
+app.get("/debug/last-2fa-screenshot", requireApiKey, async (_req, res) => {
+  if (!lastTwoFactorScreenshotPath) {
+    return res.status(404).json({
+      success: false,
+      error: "No hay captura 2FA disponible",
+    });
+  }
+
+  try {
+    const data = await fs.readFile(lastTwoFactorScreenshotPath);
+    res.json({
+      success: true,
+      path: lastTwoFactorScreenshotPath,
+      contentType: "image/png",
+      base64: data.toString("base64"),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || "No se pudo leer la captura",
+    });
+  }
 });
 
 app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response) => {
@@ -302,6 +328,7 @@ app.post(
       if (phoneOptions.length === 0) {
         const path = `/tmp/booking-2fa-no-phones-${Date.now()}.png`;
         await entry.session.page.screenshot({ path, fullPage: true }).catch(() => undefined);
+        lastTwoFactorScreenshotPath = path;
         console.log(`[SCRAPER] Saved 2FA screenshot: ${path}`);
       }
       res.json({
