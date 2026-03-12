@@ -155,7 +155,7 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
           ? "BOOKING_AUTH_INVALID_CREDENTIALS"
           : authStatus === "security_block"
           ? "BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA"
-          : authStatus === "2fa_required"
+          : typeof authStatus === "object" && authStatus.status === "2fa_required"
           ? "BOOKING_AUTH_2FA_REQUIRED"
           : "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR";
       throw new Error(message);
@@ -240,8 +240,8 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
 
     for (let i = 0; i < count; i++) {
       const el = selector.nth(i);
-      const text = await el.textContent().catch(() => "");
-      const label = text.trim();
+      const text = await el.textContent().catch(() => null);
+      const label = (text ?? "").trim();
       if (label && label.length > 3) {
         const id = `phone_${i}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
         if (!options.find(o => o.label === label)) {
@@ -252,7 +252,7 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   }
 
   if (options.length === 0) {
-    const bodyText = (await page.textContent("body")).toLowerCase();
+    const bodyText = ((await page.textContent("body")) || "").toLowerCase();
     const phoneRegex = /\+?\d[\d\s*]{5,20}/g;
     const matches = bodyText.match(phoneRegex);
     if (matches) {
