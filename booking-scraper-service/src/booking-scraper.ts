@@ -711,8 +711,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   if (hasEnvCookies) {
     if (detectTwoFactor(bodyText)) {
-      const phoneOptions = await extractPhoneOptions(page);
-      return { status: "2fa_required", phoneOptions };
+      return { status: "2fa_required", phoneOptions: [] };
     }
     console.log("[SCRAPER] Cookies loaded but Booking still redirected to login");
   }
@@ -763,8 +762,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       `[SCRAPER] Auth state before password entry: ${state.state} | ${state.title} | ${state.url}`
     );
     if (state.state === "two_factor") {
-      const phoneOptions = await extractPhoneOptions(page);
-      return { status: "2fa_required", phoneOptions };
+      return { status: "2fa_required", phoneOptions: [] };
     }
     return "unknown";
   }
@@ -789,8 +787,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await randomScroll(page);
 
   if (await looksLikeTwoFactor(page)) {
-    const phoneOptions = await extractPhoneOptions(page);
-    return { status: "2fa_required", phoneOptions };
+    return { status: "2fa_required", phoneOptions: [] };
   }
 
   if (page.url().startsWith(loginUrl) || (await looksLikeLogin(page))) {
