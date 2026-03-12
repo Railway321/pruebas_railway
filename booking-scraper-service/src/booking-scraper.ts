@@ -223,6 +223,8 @@ export interface PhoneOption {
 
 export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   const options: PhoneOption[] = [];
+  const isPhoneLike = (value: string) =>
+    /(\+?\d[\d\s*]{3,}|\*{2,}\s*\d{2,})/.test(value);
 
   const phoneSelectors = [
     page.locator('input[name*="phone"]'),
@@ -242,7 +244,7 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
       const el = selector.nth(i);
       const text = await el.textContent().catch(() => null);
       const label = (text ?? "").trim();
-      if (label && label.length > 3) {
+      if (label && label.length > 3 && isPhoneLike(label)) {
         const id = `phone_${i}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
         if (!options.find(o => o.label === label)) {
           options.push({ id, label });
