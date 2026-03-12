@@ -204,16 +204,27 @@ export async function createBookingSession(companyId: string): Promise<BookingSe
 
 function detectTwoFactor(bodyText: string): boolean {
   return (
-    bodyText.includes("verificación") ||
-    bodyText.includes("verificacion") ||
-    bodyText.includes("verification") ||
-    bodyText.includes("código") ||
-    bodyText.includes("codigo") ||
-    bodyText.includes("sms") ||
-    bodyText.includes("phone call") ||
-    bodyText.includes("two-step") ||
-    bodyText.includes("2-step")
+    bodyText.includes("código de verificación") ||
+    bodyText.includes("codigo de verificacion") ||
+    bodyText.includes("verification code") ||
+    bodyText.includes("two-step verification") ||
+    bodyText.includes("2-step verification") ||
+    bodyText.includes("selecciona un número de teléfono") ||
+    bodyText.includes("selecciona un numero de telefono") ||
+    bodyText.includes("send verification") ||
+    bodyText.includes("enviar código") ||
+    bodyText.includes("enviar codigo")
   );
+}
+
+async function hasLoginFields(page: Page): Promise<boolean> {
+  const usernameSelector = 'input[name="username"], input[type="email"]';
+  const passwordSelector = 'input[type="password"]';
+  const [usernameInput, passwordInput] = await Promise.all([
+    page.$(usernameSelector),
+    page.$(passwordSelector),
+  ]);
+  return Boolean(usernameInput || passwordInput);
 }
 
 export interface PhoneOption {
@@ -629,6 +640,9 @@ async function looksLikeLogin(page: Page): Promise<boolean> {
 }
 
 async function looksLikeTwoFactor(page: Page): Promise<boolean> {
+  if (await hasLoginFields(page)) {
+    return false;
+  }
   const otpSelectors = [
     'input[autocomplete="one-time-code"]',
     'input[name*="code"]',
