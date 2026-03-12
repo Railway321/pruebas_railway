@@ -226,6 +226,25 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   const isPhoneLike = (value: string) =>
     /(\+?\d[\d\s*]{3,}|\*{2,}\s*\d{2,})/.test(value);
 
+  const selectLocator = page.locator("select");
+  const selectCount = await selectLocator.count().catch(() => 0);
+  for (let i = 0; i < selectCount; i++) {
+    const selectEl = selectLocator.nth(i);
+    const optionLocator = selectEl.locator("option");
+    const optionCount = await optionLocator.count().catch(() => 0);
+    for (let j = 0; j < optionCount; j++) {
+      const optionEl = optionLocator.nth(j);
+      const text = await optionEl.textContent().catch(() => null);
+      const label = (text ?? "").trim();
+      if (label && label.length > 3 && isPhoneLike(label)) {
+        const id = `phone_select_${i}_${j}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
+        if (!options.find((o) => o.label === label)) {
+          options.push({ id, label });
+        }
+      }
+    }
+  }
+
   const phoneSelectors = [
     page.locator('input[name*="phone"]'),
     page.locator('input[type="tel"]'),
@@ -253,24 +272,6 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
     }
   }
 
-  if (options.length === 0) {
-    const bodyText = ((await page.textContent("body")) || "").toLowerCase();
-    const phoneRegex = /\+?\d[\d\s*]{5,20}/g;
-    const matches = bodyText.match(phoneRegex);
-    if (matches) {
-      let idx = 0;
-      for (const match of matches) {
-        const cleaned = match.replace(/\s/g, "").replace(/\*/g, "X");
-        if (cleaned.length >= 7) {
-          options.push({
-            id: `phone_${idx++}`,
-            label: match.trim()
-          });
-        }
-      }
-    }
-  }
-
   return options;
 }
 
@@ -279,7 +280,28 @@ export async function selectPhoneOption(
   phoneLabel: string
 ): Promise<boolean> {
   const normalizedLabel = phoneLabel.toLowerCase().replace(/\s/g, "");
-  
+ 
+  const selectLocator = page.locator("select");
+  const selectCount = await selectLocator.count().catch(() => 0);
+  for (let i = 0; i < selectCount; i++) {
+    const selectEl = selectLocator.nth(i);
+    const optionLocator = selectEl.locator("option");
+    const optionCount = await optionLocator.count().catch(() => 0);
+    for (let j = 0; j < optionCount; j++) {
+      const optionEl = optionLocator.nth(j);
+      const text = await optionEl.textContent().catch(() => null);
+      const label = (text ?? "").trim();
+      if (!label) continue;
+      if (label.toLowerCase().replace(/\s/g, "") === normalizedLabel) {
+        const value = await optionEl.getAttribute("value");
+        if (value) {
+          await selectEl.selectOption(value).catch(() => undefined);
+          return true;
+        }
+      }
+    }
+  }
+
   const phoneLocators = [
     page.locator(`label:has-text("${phoneLabel}")`),
     page.locator(`text=/${phoneLabel}/i`),
