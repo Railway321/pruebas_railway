@@ -192,10 +192,10 @@ app.post(
     }
 
     try {
-      await requestTwoFactorCode(entry.session.page, method === "call" ? "call" : "sms");
       if (phoneLabel) {
         await selectPhoneOption(entry.session.page, phoneLabel);
       }
+      await requestTwoFactorCode(entry.session.page, method === "call" ? "call" : "sms");
       await entry.session.page.waitForTimeout(2000);
       res.json({ success: true, message: "Código enviado" });
     } catch (error: any) {

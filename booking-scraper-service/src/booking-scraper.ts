@@ -272,7 +272,7 @@ async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   return options;
 }
 
-async function selectPhoneOption(
+export async function selectPhoneOption(
   page: Page,
   phoneLabel: string
 ): Promise<boolean> {
@@ -347,7 +347,7 @@ async function selectTwoFactorMethod(
   }
 }
 
-async function requestTwoFactorCode(
+export async function requestTwoFactorCode(
   page: Page,
   method: "sms" | "call"
 ): Promise<void> {
