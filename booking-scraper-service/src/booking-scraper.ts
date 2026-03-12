@@ -424,7 +424,6 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   if (hasEnvCookies) {
     if (detectTwoFactor(bodyText)) {
-      await requestTwoFactorCode(page, "sms");
       const phoneOptions = await extractPhoneOptions(page);
       return { status: "2fa_required", phoneOptions };
     }
@@ -462,7 +461,6 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await randomScroll(page);
 
   if (await looksLikeTwoFactor(page)) {
-    await requestTwoFactorCode(page, "sms");
     const phoneOptions = await extractPhoneOptions(page);
     return { status: "2fa_required", phoneOptions };
   }

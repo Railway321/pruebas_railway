@@ -6,6 +6,8 @@ import {
   persistCookies,
   scrapeReviewsWithSession,
   submitTwoFactorCode,
+  requestTwoFactorCode,
+  selectPhoneOption,
   type BookingSession,
 } from "./booking-scraper.js";
 
@@ -159,11 +161,59 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
 });
 
 app.post(
+  "/scrape/:companyId/send-2fa",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    const companyId = (req.params.companyId || "").trim();
+    const { sessionId, method, phoneLabel } = req.body || {};
+
+    if (!companyId || !sessionId) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId es requerido",
+      });
+    }
+
+    const entry = twoFactorSessions.get(sessionId);
+    if (!entry || entry.session.companyId !== companyId) {
+      return res.status(404).json({
+        success: false,
+        error: "Sesion 2FA no encontrada o expirada",
+      });
+    }
+
+    if (entry.expiresAt <= Date.now()) {
+      entry.session.browser.close().catch(() => undefined);
+      twoFactorSessions.delete(sessionId);
+      return res.status(410).json({
+        success: false,
+        error: "Sesion 2FA expirada",
+      });
+    }
+
+    try {
+      await requestTwoFactorCode(entry.session.page, method === "call" ? "call" : "sms");
+      if (phoneLabel) {
+        await selectPhoneOption(entry.session.page, phoneLabel);
+      }
+      await entry.session.page.waitForTimeout(2000);
+      res.json({ success: true, message: "Código enviado" });
+    } catch (error: any) {
+      console.error("[SCRAPER] Error en /send-2fa:", error);
+      res.status(500).json({
+        success: false,
+        error: error?.message || "Error al enviar código 2FA",
+      });
+    }
+  }
+);
+
+app.post(
   "/scrape/:companyId/verify-2fa",
   requireApiKey,
   async (req: Request, res: Response) => {
     const companyId = (req.params.companyId || "").trim();
-    const { sessionId, code, method, phoneLabel } = req.body || {};
+    const { sessionId, code } = req.body || {};
 
     if (!companyId || !sessionId || !code) {
       return res.status(400).json({
@@ -193,9 +243,7 @@ app.post(
       const result = await withLock(companyId, async () => {
         const status = await submitTwoFactorCode(
           entry.session,
-          String(code),
-          method === "call" ? "call" : "sms",
-          phoneLabel
+          String(code)
         );
         if (status !== "ok") {
           return { type: "invalid", status } as const;
