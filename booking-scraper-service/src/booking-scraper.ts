@@ -131,9 +131,12 @@ export interface BookingSession {
   page: Page;
 }
 
+export type TwoFactorType = "phone" | "email";
+
 export interface TwoFactorAuthResult {
   status: "2fa_required";
   phoneOptions: PhoneOption[];
+  twoFactorType: TwoFactorType;
 }
 
 export type AuthStatus =
@@ -214,6 +217,18 @@ function detectTwoFactor(bodyText: string): boolean {
     bodyText.includes("send verification") ||
     bodyText.includes("enviar código") ||
     bodyText.includes("enviar codigo")
+  );
+}
+
+function detectEmailOtp(bodyText: string, url: string): boolean {
+  if (url.includes("/otp/email-code")) return true;
+  return (
+    bodyText.includes("verify your email") ||
+    bodyText.includes("verifica tu correo") ||
+    bodyText.includes("verificar tu correo") ||
+    bodyText.includes("código enviado a tu email") ||
+    bodyText.includes("codigo enviado a tu email") ||
+    bodyText.includes("email verification")
   );
 }
 
@@ -732,7 +747,13 @@ async function looksLikeTwoFactor(page: Page): Promise<boolean> {
 }
 
 export async function describeAuthState(page: Page): Promise<{
-  state: "two_factor" | "login_username" | "login_password" | "login_full" | "unknown";
+  state:
+    | "two_factor"
+    | "two_factor_email"
+    | "login_username"
+    | "login_password"
+    | "login_full"
+    | "unknown";
   url: string;
   title: string;
 }> {
@@ -744,7 +765,9 @@ export async function describeAuthState(page: Page): Promise<{
   ]);
 
   if (await looksLikeTwoFactor(page)) {
-    return { state: "two_factor", url: page.url(), title: await page.title() };
+    const bodyText = ((await page.textContent("body")) || "").toLowerCase();
+    const state = detectEmailOtp(bodyText, page.url()) ? "two_factor_email" : "two_factor";
+    return { state, url: page.url(), title: await page.title() };
   }
 
   if (hasUsername && hasPassword) {
@@ -776,6 +799,36 @@ async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): 
   return false;
 }
 
+async function waitForAuthProgress(page: Page, label: string): Promise<{
+  state:
+    | "two_factor"
+    | "two_factor_email"
+    | "login_username"
+    | "login_password"
+    | "login_full"
+    | "unknown";
+  url: string;
+  title: string;
+}> {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const state = await describeAuthState(page);
+    console.log(
+      `[SCRAPER] ${label} attempt ${attempt + 1}/12 | state=${state.state} | title=${state.title} | url=${state.url}`
+    );
+    if (
+      state.state === "login_password" ||
+      state.state === "login_full" ||
+      state.state === "two_factor" ||
+      state.state === "two_factor_email"
+    ) {
+      return state;
+    }
+    await page.waitForTimeout(1000);
+  }
+
+  return describeAuthState(page);
+}
+
 export async function ensureBookingAuthenticated(session: BookingSession): Promise<AuthStatus> {
   const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
@@ -802,7 +855,9 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   if (hasEnvCookies) {
     const loginFields = await hasLoginFields(page);
     if (await looksLikeTwoFactor(page)) {
-      return { status: "2fa_required", phoneOptions: [] };
+      const currentBody = ((await page.textContent("body")) || "").toLowerCase();
+      const twoFactorType = detectEmailOtp(currentBody, page.url()) ? "email" : "phone";
+      return { status: "2fa_required", phoneOptions: [], twoFactorType };
     }
     if (loginFields) {
       console.log("[SCRAPER] Cookies loaded but login fields are visible");
@@ -849,9 +904,10 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       await page.keyboard.press("Enter").catch(() => undefined);
     }
     await humanDelay(page, 1500, 2500);
-    await page
-      .waitForSelector(passwordSelector, { timeout: 15000 })
-      .catch(() => undefined);
+    const progressState = await waitForAuthProgress(page, "After username submit");
+    console.log(
+      `[SCRAPER] Username submit resolved to ${progressState.state} | ${progressState.url}`
+    );
   }
 
   const passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
@@ -864,7 +920,12 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     );
     await logVisibleInputs(page, "before password entry");
     if (state.state === "two_factor") {
-      return { status: "2fa_required", phoneOptions: [] };
+      const currentBody = ((await page.textContent("body")) || "").toLowerCase();
+      const twoFactorType = detectEmailOtp(currentBody, page.url()) ? "email" : "phone";
+      return { status: "2fa_required", phoneOptions: [], twoFactorType };
+    }
+    if (state.state === "two_factor_email") {
+      return { status: "2fa_required", phoneOptions: [], twoFactorType: "email" };
     }
     return "unknown";
   }
@@ -894,8 +955,16 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await randomScroll(page);
 
   if (await looksLikeTwoFactor(page)) {
-    return { status: "2fa_required", phoneOptions: [] };
+    const updatedBodyRaw = (await page.textContent("body")) || "";
+    const updatedBody = updatedBodyRaw.toLowerCase();
+    const twoFactorType = detectEmailOtp(updatedBody, page.url()) ? "email" : "phone";
+    return { status: "2fa_required", phoneOptions: [], twoFactorType };
   }
+
+  const finalState = await describeAuthState(page);
+  console.log(
+    `[SCRAPER] Final auth state after password submit: ${finalState.state} | ${finalState.title} | ${finalState.url}`
+  );
 
   if (page.url().startsWith(loginUrl) || (await looksLikeLogin(page))) {
     const updatedBodyRaw = (await page.textContent("body")) || "";

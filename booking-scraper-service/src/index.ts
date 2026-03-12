@@ -31,6 +31,7 @@ const twoFactorSessions = new Map<
     expiresAt: number;
     status: "waiting_2fa";
     selectedMethod?: "sms" | "call";
+    twoFactorType?: "phone" | "email";
   }
 >();
 
@@ -44,6 +45,10 @@ async function logAuthState(page: BookingSession["page"], contextLabel: string) 
     `[SCRAPER] ${contextLabel} | state=${state.state} | title=${state.title} | url=${state.url}`
   );
   return state;
+}
+
+function mapStateToTwoFactorType(state: string): "phone" | "email" {
+  return state === "two_factor_email" ? "email" : "phone";
 }
 
 function requireApiKey(req: Request, res: Response, next: NextFunction) {
@@ -154,18 +159,23 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
 
       const isTwoFactor = typeof authStatus === "object" && authStatus.status === "2fa_required";
       if (isTwoFactor) {
+        const authState = await logAuthState(session.page, "2FA session created");
         const sessionId = randomUUID();
         const expiresAt = Date.now() + SESSION_TTL_MS;
+        const twoFactorType = (authStatus as any).twoFactorType || mapStateToTwoFactorType(authState.state);
         twoFactorSessions.set(sessionId, {
           session,
           expiresAt,
           status: "waiting_2fa",
+          twoFactorType,
         });
         return {
           type: "two_factor",
           sessionId,
           expiresAt,
           phoneOptions: (authStatus as any).phoneOptions || [],
+          twoFactorType,
+          authState,
         } as const;
       }
 
@@ -190,6 +200,8 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         sessionId: result.sessionId,
         expiresAt: result.expiresAt,
         phoneOptions: result.phoneOptions,
+        twoFactorType: result.twoFactorType,
+        authState: result.authState,
       });
     }
 
@@ -261,6 +273,15 @@ app.post(
       });
     }
 
+    if (entry.twoFactorType === "email") {
+      return res.status(409).json({
+        success: false,
+        error: "EMAIL_CODE_REQUIRED",
+        twoFactorType: "email",
+        authState: state,
+      });
+    }
+
     if (!entry.selectedMethod) {
       return res.status(400).json({
         success: false,
@@ -270,15 +291,33 @@ app.post(
 
     try {
       const state = await logAuthState(entry.session.page, "Before send-2fa");
-      if (state.state !== "two_factor") {
+    if (state.state !== "two_factor") {
+      if (state.state === "two_factor_email") {
+        entry.twoFactorType = "email";
         return res.status(409).json({
           success: false,
-          error: "2FA_NOT_READY",
-          state: state.state,
-          url: state.url,
-          title: state.title,
+          error: "EMAIL_CODE_REQUIRED",
+          twoFactorType: "email",
+          authState: state,
         });
       }
+      return res.status(409).json({
+        success: false,
+        error: "2FA_NOT_READY",
+        state: state.state,
+        url: state.url,
+        title: state.title,
+      });
+    }
+
+    if (entry.twoFactorType === "email") {
+      return res.status(409).json({
+        success: false,
+        error: "EMAIL_CODE_REQUIRED",
+        twoFactorType: "email",
+        authState: state,
+      });
+    }
       if (phoneLabel) {
         await selectPhoneOption(entry.session.page, phoneLabel);
       }
@@ -382,6 +421,7 @@ app.post(
         success: true,
         phoneOptions,
         authState: { state: state.state, url: state.url, title: state.title },
+        twoFactorType: entry.twoFactorType || "phone",
       });
     } catch (error: any) {
       console.error("[SCRAPER] Error en /select-2fa-method:", error);
