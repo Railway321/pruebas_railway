@@ -113,7 +113,7 @@ app.get("/debug/last-2fa-screenshot", requireApiKey, async (_req, res) => {
 
 app.get("/debug/last-login-screenshot", requireApiKey, async (_req, res) => {
   try {
-    let screenshotPath = lastLoginScreenshotPath;
+    let screenshotPath: string | null = lastLoginScreenshotPath;
     if (!screenshotPath) {
       screenshotPath = (await fs.readFile("/tmp/booking-login-last.txt", "utf8").catch(() => "")).trim();
     }
