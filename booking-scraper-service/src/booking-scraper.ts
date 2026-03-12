@@ -504,8 +504,6 @@ export async function submitTwoFactorCode(
   const { page } = session;
   if (!code.trim()) return "invalid_code";
 
-  await requestTwoFactorCode(page, method);
-
   if (phoneLabel) {
     await selectPhoneOption(page, phoneLabel);
   }
