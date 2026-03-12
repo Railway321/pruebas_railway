@@ -800,10 +800,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   const bodyText = bodyTextRaw.toLowerCase();
 
   if (hasEnvCookies) {
-    if (detectTwoFactor(bodyText)) {
+    const loginFields = await hasLoginFields(page);
+    if (await looksLikeTwoFactor(page)) {
       return { status: "2fa_required", phoneOptions: [] };
     }
-    console.log("[SCRAPER] Cookies loaded but Booking still redirected to login");
+    if (loginFields) {
+      console.log("[SCRAPER] Cookies loaded but login fields are visible");
+    } else {
+      console.log("[SCRAPER] Cookies loaded but Booking still redirected to login");
+    }
   }
 
   await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
