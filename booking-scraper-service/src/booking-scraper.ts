@@ -221,7 +221,7 @@ export interface PhoneOption {
   label: string;
 }
 
-async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
+export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
   const options: PhoneOption[] = [];
 
   const phoneSelectors = [
@@ -318,7 +318,7 @@ export async function selectPhoneOption(
   return false;
 }
 
-async function selectTwoFactorMethod(
+export async function selectTwoFactorMethod(
   page: Page,
   method: "sms" | "call"
 ): Promise<void> {

@@ -8,6 +8,8 @@ import {
   submitTwoFactorCode,
   requestTwoFactorCode,
   selectPhoneOption,
+  selectTwoFactorMethod,
+  extractPhoneOptions,
   type BookingSession,
 } from "./booking-scraper.js";
 
@@ -22,7 +24,12 @@ if (!requiredApiKey) {
 const locks = new Set<string>();
 const twoFactorSessions = new Map<
   string,
-  { session: BookingSession; expiresAt: number; status: "waiting_2fa" }
+  {
+    session: BookingSession;
+    expiresAt: number;
+    status: "waiting_2fa";
+    selectedMethod?: "sms" | "call";
+  }
 >();
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
@@ -165,7 +172,7 @@ app.post(
   requireApiKey,
   async (req: Request, res: Response) => {
     const companyId = (req.params.companyId || "").trim();
-    const { sessionId, method, phoneLabel } = req.body || {};
+    const { sessionId, phoneLabel } = req.body || {};
 
     if (!companyId || !sessionId) {
       return res.status(400).json({
@@ -191,11 +198,18 @@ app.post(
       });
     }
 
+    if (!entry.selectedMethod) {
+      return res.status(400).json({
+        success: false,
+        error: "Debe seleccionar el método antes de enviar el código",
+      });
+    }
+
     try {
       if (phoneLabel) {
         await selectPhoneOption(entry.session.page, phoneLabel);
       }
-      await requestTwoFactorCode(entry.session.page, method === "call" ? "call" : "sms");
+      await requestTwoFactorCode(entry.session.page, entry.selectedMethod);
       await entry.session.page.waitForTimeout(2000);
       res.json({ success: true, message: "Código enviado" });
     } catch (error: any) {
@@ -203,6 +217,53 @@ app.post(
       res.status(500).json({
         success: false,
         error: error?.message || "Error al enviar código 2FA",
+      });
+    }
+  }
+);
+
+app.post(
+  "/scrape/:companyId/select-2fa-method",
+  requireApiKey,
+  async (req: Request, res: Response) => {
+    const companyId = (req.params.companyId || "").trim();
+    const { sessionId, method } = req.body || {};
+
+    if (!companyId || !sessionId || !method) {
+      return res.status(400).json({
+        success: false,
+        error: "sessionId y method son requeridos",
+      });
+    }
+
+    const entry = twoFactorSessions.get(sessionId);
+    if (!entry || entry.session.companyId !== companyId) {
+      return res.status(404).json({
+        success: false,
+        error: "Sesion 2FA no encontrada o expirada",
+      });
+    }
+
+    if (entry.expiresAt <= Date.now()) {
+      entry.session.browser.close().catch(() => undefined);
+      twoFactorSessions.delete(sessionId);
+      return res.status(410).json({
+        success: false,
+        error: "Sesion 2FA expirada",
+      });
+    }
+
+    try {
+      const normalizedMethod = method === "call" ? "call" : "sms";
+      await selectTwoFactorMethod(entry.session.page, normalizedMethod);
+      entry.selectedMethod = normalizedMethod;
+      const phoneOptions = await extractPhoneOptions(entry.session.page);
+      res.json({ success: true, phoneOptions });
+    } catch (error: any) {
+      console.error("[SCRAPER] Error en /select-2fa-method:", error);
+      res.status(500).json({
+        success: false,
+        error: error?.message || "Error al seleccionar método 2FA",
       });
     }
   }
