@@ -217,14 +217,19 @@ function detectTwoFactor(bodyText: string): boolean {
   );
 }
 
+async function hasVisibleSelector(page: Page, selector: string): Promise<boolean> {
+  const locator = page.locator(selector).first();
+  return locator.isVisible().catch(() => false);
+}
+
 async function hasLoginFields(page: Page): Promise<boolean> {
   const usernameSelector = 'input[name="username"], input[type="email"]';
   const passwordSelector = 'input[type="password"]';
-  const [usernameInput, passwordInput] = await Promise.all([
-    page.$(usernameSelector),
-    page.$(passwordSelector),
+  const [hasUsername, hasPassword] = await Promise.all([
+    hasVisibleSelector(page, usernameSelector),
+    hasVisibleSelector(page, passwordSelector),
   ]);
-  return Boolean(usernameInput || passwordInput);
+  return Boolean(hasUsername || hasPassword);
 }
 
 export interface PhoneOption {
@@ -634,9 +639,9 @@ export async function requestTwoFactorCode(
 async function looksLikeLogin(page: Page): Promise<boolean> {
   const usernameSelector = 'input[name="username"], input[type="email"]';
   const passwordSelector = 'input[type="password"]';
-  const usernameInput = await page.$(usernameSelector);
-  const passwordInput = await page.$(passwordSelector);
-  return Boolean(usernameInput && passwordInput);
+  const hasUsername = await hasVisibleSelector(page, usernameSelector);
+  const hasPassword = await hasVisibleSelector(page, passwordSelector);
+  return Boolean(hasUsername || hasPassword);
 }
 
 async function looksLikeTwoFactor(page: Page): Promise<boolean> {
@@ -663,24 +668,24 @@ export async function describeAuthState(page: Page): Promise<{
 }> {
   const usernameSelector = 'input[name="username"], input[type="email"]';
   const passwordSelector = 'input[type="password"]';
-  const [usernameInput, passwordInput] = await Promise.all([
-    page.$(usernameSelector),
-    page.$(passwordSelector),
+  const [hasUsername, hasPassword] = await Promise.all([
+    hasVisibleSelector(page, usernameSelector),
+    hasVisibleSelector(page, passwordSelector),
   ]);
 
   if (await looksLikeTwoFactor(page)) {
     return { state: "two_factor", url: page.url(), title: await page.title() };
   }
 
-  if (usernameInput && passwordInput) {
+  if (hasUsername && hasPassword) {
     return { state: "login_full", url: page.url(), title: await page.title() };
   }
 
-  if (usernameInput && !passwordInput) {
+  if (hasUsername && !hasPassword) {
     return { state: "login_username", url: page.url(), title: await page.title() };
   }
 
-  if (!usernameInput && passwordInput) {
+  if (!hasUsername && hasPassword) {
     return { state: "login_password", url: page.url(), title: await page.title() };
   }
 
@@ -752,10 +757,11 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     `[SCRAPER] Auth state after login load: ${initialState.state} | ${initialState.title} | ${initialState.url}`
   );
 
-  const usernameInput = await page.$(usernameSelector);
-  const passwordInput = await page.$(passwordSelector);
+  const hasUsernameVisible = await hasVisibleSelector(page, usernameSelector);
+  const hasPasswordVisible = await hasVisibleSelector(page, passwordSelector);
 
-  if (usernameInput && !passwordInput) {
+  if (hasUsernameVisible && !hasPasswordVisible) {
+    const usernameInput = page.locator(usernameSelector).first();
     for (const char of username) {
       await usernameInput.type(char, { delay: Math.random() * 100 + 50 });
     }
@@ -767,10 +773,10 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       .catch(() => undefined);
   }
 
-  const passwordInputAfter = await page.$(passwordSelector);
-  const usernameInputAfter = await page.$(usernameSelector);
+  const passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
+  const usernameInputAfterVisible = await hasVisibleSelector(page, usernameSelector);
 
-  if (!passwordInputAfter) {
+  if (!passwordInputAfterVisible) {
     const state = await describeAuthState(page);
     console.log(
       `[SCRAPER] Auth state before password entry: ${state.state} | ${state.title} | ${state.url}`
@@ -781,7 +787,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     return "unknown";
   }
 
-  if (usernameInputAfter) {
+  if (usernameInputAfterVisible) {
+    const usernameInputAfter = page.locator(usernameSelector).first();
     const currentValue = await usernameInputAfter.inputValue().catch(() => "");
     if (!currentValue) {
       for (const char of username) {
@@ -791,6 +798,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     }
   }
 
+  const passwordInputAfter = page.locator(passwordSelector).first();
   for (const char of password) {
     await passwordInputAfter.type(char, { delay: Math.random() * 100 + 50 });
   }
