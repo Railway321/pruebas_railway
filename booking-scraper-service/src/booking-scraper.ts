@@ -259,6 +259,39 @@ async function logInputValueLengths(page: Page, context: string): Promise<void> 
   }
 }
 
+async function resolveLoginIdentifier(
+  page: Page,
+  username: string,
+  email: string | undefined
+): Promise<string> {
+  const mode = (process.env.BOOKING_EXTRANET_LOGIN_MODE || "").toLowerCase();
+  if (mode === "email" && email) return email;
+  if (mode === "username") return username;
+
+  const usernameSelector = 'input[name="username"], input[name="identifier"], input[type="email"], input[id*="username"], input[id*="email"]';
+  const hints = await page
+    .evaluate((selector) => {
+      const input = document.querySelector(selector) as HTMLInputElement | null;
+      if (!input) return "";
+      const labelText = input.labels ? Array.from(input.labels).map((l) => l.textContent || "").join(" ") : "";
+      const ariaLabel = input.getAttribute("aria-label") || "";
+      const placeholder = input.getAttribute("placeholder") || "";
+      const name = input.getAttribute("name") || "";
+      const id = input.getAttribute("id") || "";
+      return [labelText, ariaLabel, placeholder, name, id].join(" ").toLowerCase();
+    }, usernameSelector)
+    .catch(() => "");
+
+  const looksLikeEmail = /email|e-mail|correo/.test(hints);
+  if (looksLikeEmail && email) {
+    console.log("[SCRAPER] Using email identifier based on input hints");
+    return email;
+  }
+
+  console.log("[SCRAPER] Using username identifier based on input hints");
+  return username;
+}
+
 async function hasLoginFields(page: Page): Promise<boolean> {
   const usernameSelector = 'input[name="username"], input[type="email"], input[name="identifier"], input[id*="username"], input[id*="email"]';
   const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
@@ -746,7 +779,7 @@ async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): 
 export async function ensureBookingAuthenticated(session: BookingSession): Promise<AuthStatus> {
   const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
-  const loginIdentifier = process.env.BOOKING_EXTRANET_EMAIL || username;
+  const loginEmail = process.env.BOOKING_EXTRANET_EMAIL;
   const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
   const loginUrl = getEnvOrThrow("BOOKING_LOGIN_URL");
   const hasEnvCookies = Boolean(process.env.BOOKING_COOKIES_JSON);
@@ -801,6 +834,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   if (hasUsernameVisible && !hasPasswordVisible) {
     const usernameInput = page.locator(usernameSelector).first();
+    const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     await usernameInput.fill("").catch(() => undefined);
     await usernameInput.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
     await logInputValueLengths(page, "after username fill");
@@ -832,6 +866,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   if (usernameInputAfterVisible) {
     const usernameInputAfter = page.locator(usernameSelector).first();
+    const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     const currentValue = await usernameInputAfter.inputValue().catch(() => "");
     if (!currentValue) {
       await usernameInputAfter.fill("").catch(() => undefined);
