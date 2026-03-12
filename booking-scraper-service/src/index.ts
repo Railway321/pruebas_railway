@@ -321,15 +321,34 @@ app.post(
       const normalizedMethod = method === "call" ? "call" : "sms";
       await selectTwoFactorMethod(entry.session.page, normalizedMethod);
       entry.selectedMethod = normalizedMethod;
+      await entry.session.page
+        .waitForFunction(
+          () => {
+            const hasSelect = Boolean(document.querySelector("select"));
+            const hasPhoneLabel = Array.from(document.querySelectorAll("label, div, span, p"))
+              .map((el) => (el.textContent || "").toLowerCase())
+              .some((text) => text.includes("número de teléfono") || text.includes("phone number"));
+            const hasSendButton = Array.from(document.querySelectorAll("button, a"))
+              .map((el) => (el.textContent || "").toLowerCase())
+              .some((text) => text.includes("enviar código") || text.includes("send verification"));
+            return hasSelect || hasPhoneLabel || hasSendButton;
+          },
+          { timeout: 10000 }
+        )
+        .catch(() => undefined);
       const phoneOptions = await extractPhoneOptions(entry.session.page);
       console.log(
         `[SCRAPER] 2FA method confirmed (${normalizedMethod}). Phone options: ${phoneOptions.length}`
       );
       if (phoneOptions.length === 0) {
+        const stateAfter = await logAuthState(entry.session.page, "After select-2fa-method");
         const path = `/tmp/booking-2fa-no-phones-${Date.now()}.png`;
         await entry.session.page.screenshot({ path, fullPage: true }).catch(() => undefined);
         lastTwoFactorScreenshotPath = path;
         console.log(`[SCRAPER] Saved 2FA screenshot: ${path}`);
+        console.log(
+          `[SCRAPER] No phones after method. state=${stateAfter.state} url=${stateAfter.url}`
+        );
       }
       res.json({
         success: true,

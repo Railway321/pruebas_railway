@@ -232,6 +232,70 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
     options.push({ id, label });
   };
 
+  const fromDom = await page
+    .evaluate(() => {
+      const results: string[] = [];
+      const isPhoneLike = (value: string) =>
+        /(\+?\d[\d\s*]{3,}|\*{2,}\s*\d{2,})/.test(value);
+
+      const collectFromRoot = (root: Document | ShadowRoot) => {
+        const selects = Array.from(root.querySelectorAll("select"));
+        for (const select of selects) {
+          const options = Array.from(select.options);
+          for (const option of options) {
+            const label = (option.textContent || "").trim();
+            if (label && isPhoneLike(label)) {
+              results.push(label);
+            }
+          }
+        }
+
+        const listOptions = Array.from(
+          root.querySelectorAll('[role="listbox"] [role="option"], [role="listbox"] li')
+        );
+        for (const el of listOptions) {
+          const label = (el.textContent || "").trim();
+          if (label && isPhoneLike(label)) {
+            results.push(label);
+          }
+        }
+      };
+
+      const walk = (node: Element | Document | ShadowRoot) => {
+        if (node instanceof Document || node instanceof ShadowRoot) {
+          collectFromRoot(node);
+        }
+        const elements = node instanceof Element ? [node] : Array.from(node.children ?? []);
+        for (const el of elements) {
+          const shadow = (el as Element).shadowRoot;
+          if (shadow) {
+            walk(shadow);
+          }
+          const children = (el as Element).children;
+          if (children && children.length) {
+            for (const child of Array.from(children)) {
+              walk(child);
+            }
+          }
+        }
+      };
+
+      walk(document);
+      return Array.from(new Set(results));
+    })
+    .catch(() => [] as string[]);
+
+  if (fromDom.length > 0) {
+    const domOptions: PhoneOption[] = [];
+    for (const label of fromDom) {
+      addOption(domOptions, label, "phone_dom");
+    }
+    if (domOptions.length > 0) {
+      console.log(`[SCRAPER] Phone options found via DOM: ${domOptions.length}`);
+      return domOptions;
+    }
+  }
+
   const extractFromFrame = async (frame: Frame): Promise<PhoneOption[]> => {
     const options: PhoneOption[] = [];
     const selectLocator = frame.locator("select");
