@@ -299,6 +299,11 @@ app.post(
       console.log(
         `[SCRAPER] 2FA method confirmed (${normalizedMethod}). Phone options: ${phoneOptions.length}`
       );
+      if (phoneOptions.length === 0) {
+        const path = `/tmp/booking-2fa-no-phones-${Date.now()}.png`;
+        await entry.session.page.screenshot({ path, fullPage: true }).catch(() => undefined);
+        console.log(`[SCRAPER] Saved 2FA screenshot: ${path}`);
+      }
       res.json({
         success: true,
         phoneOptions,
