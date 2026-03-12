@@ -273,15 +273,6 @@ app.post(
       });
     }
 
-    if (entry.twoFactorType === "email") {
-      return res.status(409).json({
-        success: false,
-        error: "EMAIL_CODE_REQUIRED",
-        twoFactorType: "email",
-        authState: state,
-      });
-    }
-
     if (!entry.selectedMethod) {
       return res.status(400).json({
         success: false,
@@ -291,9 +282,26 @@ app.post(
 
     try {
       const state = await logAuthState(entry.session.page, "Before send-2fa");
-    if (state.state !== "two_factor") {
-      if (state.state === "two_factor_email") {
-        entry.twoFactorType = "email";
+      if (state.state !== "two_factor") {
+        if (state.state === "two_factor_email") {
+          entry.twoFactorType = "email";
+          return res.status(409).json({
+            success: false,
+            error: "EMAIL_CODE_REQUIRED",
+            twoFactorType: "email",
+            authState: state,
+          });
+        }
+        return res.status(409).json({
+          success: false,
+          error: "2FA_NOT_READY",
+          state: state.state,
+          url: state.url,
+          title: state.title,
+        });
+      }
+
+      if (entry.twoFactorType === "email") {
         return res.status(409).json({
           success: false,
           error: "EMAIL_CODE_REQUIRED",
@@ -301,23 +309,6 @@ app.post(
           authState: state,
         });
       }
-      return res.status(409).json({
-        success: false,
-        error: "2FA_NOT_READY",
-        state: state.state,
-        url: state.url,
-        title: state.title,
-      });
-    }
-
-    if (entry.twoFactorType === "email") {
-      return res.status(409).json({
-        success: false,
-        error: "EMAIL_CODE_REQUIRED",
-        twoFactorType: "email",
-        authState: state,
-      });
-    }
       if (phoneLabel) {
         await selectPhoneOption(entry.session.page, phoneLabel);
       }
@@ -367,15 +358,33 @@ app.post(
 
     try {
       let state = await logAuthState(entry.session.page, "Before select-2fa-method");
+      if (state.state === "two_factor_email") {
+        entry.twoFactorType = "email";
+        return res.status(409).json({
+          success: false,
+          error: "EMAIL_CODE_REQUIRED",
+          twoFactorType: "email",
+          authState: state,
+        });
+      }
       if (state.state !== "two_factor") {
         for (let i = 0; i < 5; i++) {
           await entry.session.page.waitForTimeout(1000);
           state = await logAuthState(entry.session.page, `Waiting 2FA (${i + 1}/5)`);
-          if (state.state === "two_factor") break;
+          if (state.state === "two_factor" || state.state === "two_factor_email") break;
         }
       }
 
       if (state.state !== "two_factor") {
+        if (state.state === "two_factor_email") {
+          entry.twoFactorType = "email";
+          return res.status(409).json({
+            success: false,
+            error: "EMAIL_CODE_REQUIRED",
+            twoFactorType: "email",
+            authState: state,
+          });
+        }
         return res.status(409).json({
           success: false,
           error: "2FA_NOT_READY",
