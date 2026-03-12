@@ -365,7 +365,7 @@ export async function selectPhoneOption(
       const visible = await combobox.isVisible().catch(() => false);
       if (!visible) continue;
       await combobox.click().catch(() => undefined);
-      await frame.waitForTimeout(300);
+      await frame.page().waitForTimeout(300);
       const optionLocator = frame.locator('[role="listbox"] [role="option"], [role="listbox"] li');
       const optionCount = await optionLocator.count().catch(() => 0);
       for (let j = 0; j < optionCount; j++) {
@@ -377,7 +377,7 @@ export async function selectPhoneOption(
           return true;
         }
       }
-      await frame.keyboard.press("Escape").catch(() => undefined);
+      await frame.page().keyboard.press("Escape").catch(() => undefined);
     }
 
     const phoneLocators = [
@@ -878,25 +878,3 @@ export async function scrapeReviewsWithSession(
 export async function persistCookies(session: BookingSession): Promise<void> {
   await saveCookies(session.context, session.companyId);
 }
-    const comboboxLocator = frame.locator('[role="combobox"], [aria-haspopup="listbox"], [aria-expanded]');
-    const comboboxCount = await comboboxLocator.count().catch(() => 0);
-    for (let i = 0; i < comboboxCount; i++) {
-      const combobox = comboboxLocator.nth(i);
-      const visible = await combobox.isVisible().catch(() => false);
-      if (!visible) continue;
-      await combobox.click().catch(() => undefined);
-      await frame.waitForTimeout(300);
-      const listboxOptions = frame.locator('[role="listbox"] [role="option"], [role="listbox"] li');
-      const listCount = await listboxOptions.count().catch(() => 0);
-      for (let j = 0; j < listCount; j++) {
-        const el = listboxOptions.nth(j);
-        const text = await el.textContent().catch(() => null);
-        const label = (text ?? "").trim();
-        const optVisible = await el.isVisible().catch(() => false);
-        if (optVisible) {
-          addOption(options, label, `phone_combo_${i}_${j}`);
-        }
-      }
-      await frame.keyboard.press("Escape").catch(() => undefined);
-      if (options.length > 0) break;
-    }
