@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page, type Frame } from "playwright";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseBookingCsv, type InsertReview } from "./booking-csv-parser.js";
@@ -222,57 +222,80 @@ export interface PhoneOption {
 }
 
 export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
-  const options: PhoneOption[] = [];
   const isPhoneLike = (value: string) =>
     /(\+?\d[\d\s*]{3,}|\*{2,}\s*\d{2,})/.test(value);
 
-  const selectLocator = page.locator("select");
-  const selectCount = await selectLocator.count().catch(() => 0);
-  for (let i = 0; i < selectCount; i++) {
-    const selectEl = selectLocator.nth(i);
-    const optionLocator = selectEl.locator("option");
-    const optionCount = await optionLocator.count().catch(() => 0);
-    for (let j = 0; j < optionCount; j++) {
-      const optionEl = optionLocator.nth(j);
-      const text = await optionEl.textContent().catch(() => null);
-      const label = (text ?? "").trim();
-      if (label && label.length > 3 && isPhoneLike(label)) {
-        const id = `phone_select_${i}_${j}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
-        if (!options.find((o) => o.label === label)) {
-          options.push({ id, label });
+  const extractFromFrame = async (frame: Frame): Promise<PhoneOption[]> => {
+    const options: PhoneOption[] = [];
+    const selectLocator = frame.locator("select");
+    const selectCount = await selectLocator.count().catch(() => 0);
+    for (let i = 0; i < selectCount; i++) {
+      const selectEl = selectLocator.nth(i);
+      const optionLocator = selectEl.locator("option");
+      const optionCount = await optionLocator.count().catch(() => 0);
+      for (let j = 0; j < optionCount; j++) {
+        const optionEl = optionLocator.nth(j);
+        const text = await optionEl.textContent().catch(() => null);
+        const label = (text ?? "").trim();
+        if (label && label.length > 3 && isPhoneLike(label)) {
+          const id = `phone_select_${i}_${j}_${Buffer.from(label)
+            .toString("base64")
+            .slice(0, 12)}`;
+          if (!options.find((o) => o.label === label)) {
+            options.push({ id, label });
+          }
         }
       }
     }
-  }
 
-  const phoneSelectors = [
-    page.locator('input[name*="phone"]'),
-    page.locator('input[type="tel"]'),
-    page.locator('input[autocomplete="tel"]'),
-    page.locator('label:has(input[type="radio"]):not(:has-text(/sms|call|llamada|texto/i))'),
-    page.locator('div:has(input[type="radio"])'),
-    page.locator('li:has(input[type="radio"])'),
-    page.locator('label:has(input[type="checkbox"]):not(:has-text(/sms|call|llamada|texto/i))'),
-  ];
+    const phoneSelectors = [
+      frame.locator('input[name*="phone"]'),
+      frame.locator('input[type="tel"]'),
+      frame.locator('input[autocomplete="tel"]'),
+      frame.locator('label:has(input[type="radio"]):not(:has-text(/sms|call|llamada|texto/i))'),
+      frame.locator('div:has(input[type="radio"])'),
+      frame.locator('li:has(input[type="radio"])'),
+      frame.locator('label:has(input[type="checkbox"]):not(:has-text(/sms|call|llamada|texto/i))'),
+    ];
 
-  for (const selector of phoneSelectors) {
-    const count = await selector.count().catch(() => 0);
-    if (count === 0) continue;
+    for (const selector of phoneSelectors) {
+      const count = await selector.count().catch(() => 0);
+      if (count === 0) continue;
 
-    for (let i = 0; i < count; i++) {
-      const el = selector.nth(i);
-      const text = await el.textContent().catch(() => null);
-      const label = (text ?? "").trim();
-      if (label && label.length > 3 && isPhoneLike(label)) {
-        const id = `phone_${i}_${Buffer.from(label).toString("base64").slice(0, 12)}`;
-        if (!options.find(o => o.label === label)) {
-          options.push({ id, label });
+      for (let i = 0; i < count; i++) {
+        const el = selector.nth(i);
+        const text = await el.textContent().catch(() => null);
+        const label = (text ?? "").trim();
+        if (label && label.length > 3 && isPhoneLike(label)) {
+          const id = `phone_${i}_${Buffer.from(label)
+            .toString("base64")
+            .slice(0, 12)}`;
+          if (!options.find((o) => o.label === label)) {
+            options.push({ id, label });
+          }
         }
       }
     }
+
+    return options;
+  };
+
+  const frames = page.frames();
+  for (const frame of frames) {
+    const options = await extractFromFrame(frame);
+    if (options.length > 0) {
+      if (frame !== page.mainFrame()) {
+        console.log(`[SCRAPER] Phone options found in frame: ${frame.url()}`);
+      }
+      return options;
+    }
   }
 
-  return options;
+  const frameUrls = frames.map((f) => f.url()).filter(Boolean);
+  console.log(
+    `[SCRAPER] No phone options found. Frames: ${frameUrls.join(" | ") || "none"}`
+  );
+  return [];
 }
 
 export async function selectPhoneOption(
@@ -280,63 +303,88 @@ export async function selectPhoneOption(
   phoneLabel: string
 ): Promise<boolean> {
   const normalizedLabel = phoneLabel.toLowerCase().replace(/\s/g, "");
- 
-  const selectLocator = page.locator("select");
-  const selectCount = await selectLocator.count().catch(() => 0);
-  for (let i = 0; i < selectCount; i++) {
-    const selectEl = selectLocator.nth(i);
-    const optionLocator = selectEl.locator("option");
-    const optionCount = await optionLocator.count().catch(() => 0);
-    for (let j = 0; j < optionCount; j++) {
-      const optionEl = optionLocator.nth(j);
-      const text = await optionEl.textContent().catch(() => null);
-      const label = (text ?? "").trim();
-      if (!label) continue;
-      if (label.toLowerCase().replace(/\s/g, "") === normalizedLabel) {
-        const value = await optionEl.getAttribute("value");
-        if (value) {
-          await selectEl.selectOption(value).catch(() => undefined);
+
+  const trySelectInFrame = async (frame: Frame): Promise<boolean> => {
+    const selectLocator = frame.locator("select");
+    const selectCount = await selectLocator.count().catch(() => 0);
+    for (let i = 0; i < selectCount; i++) {
+      const selectEl = selectLocator.nth(i);
+      const optionLocator = selectEl.locator("option");
+      const optionCount = await optionLocator.count().catch(() => 0);
+      for (let j = 0; j < optionCount; j++) {
+        const optionEl = optionLocator.nth(j);
+        const text = await optionEl.textContent().catch(() => null);
+        const label = (text ?? "").trim();
+        if (!label) continue;
+        if (label.toLowerCase().replace(/\s/g, "") === normalizedLabel) {
+          const value = await optionEl.getAttribute("value");
+          if (value) {
+            await selectEl.selectOption(value).catch(() => undefined);
+            return true;
+          }
+        }
+      }
+    }
+
+    const phoneLocators = [
+      frame.locator(`label:has-text("${phoneLabel}")`),
+      frame.locator(`text=/${phoneLabel}/i`),
+      frame.locator(`div:has-text("${phoneLabel}")`),
+      frame.locator(`li:has-text("${phoneLabel}")`),
+      frame
+        .locator('label:has(input[type="radio"])')
+        .filter({
+          hasText: new RegExp(
+            phoneLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i"
+          ),
+        }),
+    ];
+
+    for (const locator of phoneLocators) {
+      const count = await locator.count().catch(() => 0);
+      if (count === 0) continue;
+      for (let i = 0; i < count; i++) {
+        const el = locator.nth(i);
+        const visible = await el.isVisible().catch(() => false);
+        if (visible) {
+          await el.click().catch(() => undefined);
+          await page.waitForTimeout(500);
           return true;
         }
       }
     }
-  }
 
-  const phoneLocators = [
-    page.locator(`label:has-text("${phoneLabel}")`),
-    page.locator(`text=/${phoneLabel}/i`),
-    page.locator(`div:has-text("${phoneLabel}")`),
-    page.locator(`li:has-text("${phoneLabel}")`),
-    page.locator(`label:has(input[type="radio"])`).filter({ hasText: new RegExp(phoneLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }),
-  ];
-
-  for (const locator of phoneLocators) {
-    const count = await locator.count().catch(() => 0);
-    if (count === 0) continue;
-    for (let i = 0; i < count; i++) {
-      const el = locator.nth(i);
-      const visible = await el.isVisible().catch(() => false);
-      if (visible) {
-        await el.click().catch(() => undefined);
-        await page.waitForTimeout(500);
-        return true;
+    const allRadioLabels = frame.locator(
+      'label:has(input[type="radio"]), li:has(input[type="radio"])'
+    );
+    const radioCount = await allRadioLabels.count().catch(() => 0);
+    for (let i = 0; i < radioCount; i++) {
+      const el = allRadioLabels.nth(i);
+      const text = await el.textContent().catch(() => "");
+      if (
+        text &&
+        text
+          .toLowerCase()
+          .replace(/\s/g, "")
+          .includes(normalizedLabel.replace(/\*/g, "X"))
+      ) {
+        const visible = await el.isVisible().catch(() => false);
+        if (visible) {
+          await el.click().catch(() => undefined);
+          await page.waitForTimeout(500);
+          return true;
+        }
       }
     }
-  }
 
-  const allRadioLabels = page.locator('label:has(input[type="radio"]), li:has(input[type="radio"])');
-  const radioCount = await allRadioLabels.count().catch(() => 0);
-  for (let i = 0; i < radioCount; i++) {
-    const el = allRadioLabels.nth(i);
-    const text = await el.textContent().catch(() => "");
-    if (text && text.toLowerCase().replace(/\s/g, "").includes(normalizedLabel.replace(/\*/g, "X"))) {
-      const visible = await el.isVisible().catch(() => false);
-      if (visible) {
-        await el.click().catch(() => undefined);
-        await page.waitForTimeout(500);
-        return true;
-      }
-    }
+    return false;
+  };
+
+  const frames = page.frames();
+  for (const frame of frames) {
+    const selected = await trySelectInFrame(frame);
+    if (selected) return true;
   }
 
   return false;
