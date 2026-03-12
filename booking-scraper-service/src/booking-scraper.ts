@@ -238,11 +238,36 @@ export async function extractPhoneOptions(page: Page): Promise<PhoneOption[]> {
     const comboboxLocator = frame.locator(
       '[role="combobox"], [aria-haspopup="listbox"], [aria-expanded]'
     );
+
+    await frame
+      .waitForFunction(
+        () => {
+          const selects = Array.from(document.querySelectorAll("select"));
+          const selectHasPhone = selects.some((select) =>
+            Array.from(select.options).some((opt) => /\*\d{2,}|\+?\d/.test(opt.textContent || ""))
+          );
+          const listboxHasPhone = Array.from(
+            document.querySelectorAll('[role="listbox"] [role="option"], [role="listbox"] li')
+          ).some((el) => /\*\d{2,}|\+?\d/.test(el.textContent || ""));
+          return selectHasPhone || listboxHasPhone;
+        },
+        { timeout: 5000 }
+      )
+      .catch(() => undefined);
     const selectCount = await selectLocator.count().catch(() => 0);
     for (let i = 0; i < selectCount; i++) {
       const selectEl = selectLocator.nth(i);
       const optionLocator = selectEl.locator("option");
       const optionCount = await optionLocator.count().catch(() => 0);
+      if (optionCount > 0) {
+        const sample = await optionLocator
+          .first()
+          .textContent()
+          .catch(() => null);
+        console.log(
+          `[SCRAPER] select options found (${optionCount}) in frame ${frame.url()} sample=${(sample ?? "").trim()}`
+        );
+      }
       for (let j = 0; j < optionCount; j++) {
         const optionEl = optionLocator.nth(j);
         const text = await optionEl.textContent().catch(() => null);
