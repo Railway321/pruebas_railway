@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type Page, type Frame } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Frame } from "playwright";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseBookingCsv, type InsertReview } from "./booking-csv-parser.js";
@@ -13,12 +13,63 @@ function getEnvOrThrow(name: string): string {
   return value;
 }
 
+export type SessionFormat = "cookies" | "storageState";
+export type AuthCheckResult = "ok" | "login_required" | "two_factor_required" | "security_block" | "unknown";
+
+export interface SessionMetadata {
+  updatedAt: string;
+  lastLoadedAt?: string;
+  lastValidationAt?: string;
+  lastValidationResult?: AuthCheckResult | string;
+  lastScrapeAt?: string;
+  lastScrapeResult?: string;
+  format?: SessionFormat;
+}
+
+const BOOKING_ENABLE_AUTOMATED_LOGIN = String(process.env.BOOKING_ENABLE_AUTOMATED_LOGIN || "true").toLowerCase() !== "false";
+
 async function ensureCookieDir() {
   await fs.mkdir(COOKIE_DIR, { recursive: true });
 }
 
 function getCookiesPath(companyId: string): string {
   return path.join(COOKIE_DIR, `booking-cookies-${companyId}.json`);
+}
+
+function getStorageStatePath(companyId: string): string {
+  return path.join(COOKIE_DIR, `booking-storage-state-${companyId}.json`);
+}
+
+function getMetaPath(companyId: string): string {
+  return path.join(COOKIE_DIR, `booking-session-meta-${companyId}.json`);
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  return fs.access(filePath).then(() => true).catch(() => false);
+}
+
+async function loadMetadata(companyId: string): Promise<SessionMetadata | null> {
+  try {
+    const raw = await fs.readFile(getMetaPath(companyId), "utf8");
+    return JSON.parse(raw) as SessionMetadata;
+  } catch {
+    return null;
+  }
+}
+
+async function saveMetadata(companyId: string, meta: Partial<SessionMetadata>): Promise<void> {
+  try {
+    await ensureCookieDir();
+    const existing = (await loadMetadata(companyId)) || { updatedAt: new Date().toISOString() };
+    const merged: SessionMetadata = {
+      ...existing,
+      ...meta,
+      updatedAt: new Date().toISOString(),
+    };
+    await fs.writeFile(getMetaPath(companyId), JSON.stringify(merged, null, 2), "utf8");
+  } catch (error) {
+    console.warn("[SCRAPER] No se pudieron guardar metadatos de sesión:", error);
+  }
 }
 
 async function loadCookies(context: BrowserContext, companyId: string) {
@@ -93,6 +144,141 @@ async function saveCookies(context: BrowserContext, companyId: string) {
     );
   } catch (error) {
     console.warn("[SCRAPER] No se pudieron guardar las cookies:", error);
+  }
+}
+
+
+export async function loadPersistedSession(
+  context: BrowserContext,
+  companyId: string
+): Promise<{ format: SessionFormat; loaded: boolean }> {
+  try {
+    await ensureCookieDir();
+
+    const storageStatePath = getStorageStatePath(companyId);
+    if (await fileExists(storageStatePath)) {
+      const raw = await fs.readFile(storageStatePath, "utf8");
+      const storageState = JSON.parse(raw);
+      if (Array.isArray(storageState?.cookies) && storageState.cookies.length > 0) {
+        await context.addCookies(storageState.cookies);
+        await saveMetadata(companyId, {
+          format: "storageState",
+          lastLoadedAt: new Date().toISOString(),
+        });
+        console.log(`[SCRAPER] Loaded storageState with ${storageState.cookies.length} cookies`);
+        return { format: "storageState", loaded: true };
+      }
+    }
+
+    const cookiesPath = getCookiesPath(companyId);
+    if (await fileExists(cookiesPath)) {
+      const raw = await fs.readFile(cookiesPath, "utf8");
+      const cookies = JSON.parse(raw);
+      if (Array.isArray(cookies) && cookies.length > 0) {
+        await context.addCookies(cookies);
+        await saveMetadata(companyId, {
+          format: "cookies",
+          lastLoadedAt: new Date().toISOString(),
+        });
+        console.log(`[SCRAPER] Loaded ${cookies.length} cookies from persisted file`);
+        return { format: "cookies", loaded: true };
+      }
+    }
+
+    await loadCookies(context, companyId);
+    return { format: "cookies", loaded: false };
+  } catch (error) {
+    console.warn("[SCRAPER] No se pudo cargar la sesión persistida:", error);
+    return { format: "cookies", loaded: false };
+  }
+}
+
+export async function savePersistedSession(
+  context: BrowserContext,
+  companyId: string,
+  format: SessionFormat = "storageState"
+): Promise<void> {
+  try {
+    await ensureCookieDir();
+
+    if (format === "storageState") {
+      const storageState = await context.storageState();
+      await fs.writeFile(getStorageStatePath(companyId), JSON.stringify(storageState, null, 2), "utf8");
+      console.log(`[SCRAPER] Saved storageState with ${storageState.cookies.length} cookies`);
+    }
+
+    await saveCookies(context, companyId);
+    await saveMetadata(companyId, { format });
+  } catch (error) {
+    console.warn("[SCRAPER] No se pudo guardar la sesión persistida:", error);
+  }
+}
+
+export async function storePersistedSession(
+  companyId: string,
+  payload: { cookies?: any[]; storageState?: { cookies?: any[]; origins?: any[] } }
+): Promise<void> {
+  await ensureCookieDir();
+
+  if (payload.storageState) {
+    await fs.writeFile(
+      getStorageStatePath(companyId),
+      JSON.stringify(payload.storageState, null, 2),
+      "utf8"
+    );
+    const cookies = Array.isArray(payload.storageState.cookies) ? payload.storageState.cookies : [];
+    await fs.writeFile(getCookiesPath(companyId), JSON.stringify(cookies, null, 2), "utf8");
+    await saveMetadata(companyId, { format: "storageState" });
+    return;
+  }
+
+  if (Array.isArray(payload.cookies)) {
+    await fs.writeFile(getCookiesPath(companyId), JSON.stringify(payload.cookies, null, 2), "utf8");
+    await saveMetadata(companyId, { format: "cookies" });
+    return;
+  }
+
+  throw new Error("SESSION_PAYLOAD_INVALID");
+}
+
+export async function deletePersistedSession(companyId: string): Promise<void> {
+  await ensureCookieDir();
+  await Promise.all([
+    fs.unlink(getCookiesPath(companyId)).catch(() => undefined),
+    fs.unlink(getStorageStatePath(companyId)).catch(() => undefined),
+    fs.unlink(getMetaPath(companyId)).catch(() => undefined),
+  ]);
+}
+
+export async function getSessionStatus(companyId: string): Promise<{
+  exists: boolean;
+  hasCookies: boolean;
+  hasStorageState: boolean;
+  metadata: SessionMetadata | null;
+}> {
+  const [hasCookies, hasStorageState, metadata] = await Promise.all([
+    fileExists(getCookiesPath(companyId)),
+    fileExists(getStorageStatePath(companyId)),
+    loadMetadata(companyId),
+  ]);
+
+  return {
+    exists: hasCookies || hasStorageState,
+    hasCookies,
+    hasStorageState,
+    metadata,
+  };
+}
+
+export async function saveScreenshot(page: Page, companyId: string, prefix: string): Promise<string | null> {
+  try {
+    await ensureCookieDir();
+    const screenshotPath = path.join(COOKIE_DIR, `${prefix}-${companyId}-${Date.now()}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    return screenshotPath;
+  } catch (error) {
+    console.warn("[SCRAPER] No se pudo guardar screenshot:", error);
+    return null;
   }
 }
 
@@ -224,6 +410,32 @@ export type TwoFactorStatus = "ok" | "invalid_code" | "still_required";
 export async function scrapeBookingReviews(companyId: string): Promise<ScrapeResult> {
   const session = await createBookingSession(companyId);
   try {
+    const existingSession = await checkExistingBookingSession(session);
+    console.log(`[SCRAPER] Existing session check: ${existingSession.result}`);
+
+    if (existingSession.result === "security_block") {
+      await saveScreenshot(session.page, companyId, "security-block");
+      throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
+    }
+
+    if (existingSession.result === "ok") {
+      const result = await scrapeReviewsWithSession(session);
+      await savePersistedSession(session.context, companyId, "storageState");
+      await saveMetadata(companyId, {
+        lastScrapeAt: new Date().toISOString(),
+        lastScrapeResult: "success",
+      });
+      return result;
+    }
+
+    if (!BOOKING_ENABLE_AUTOMATED_LOGIN) {
+      throw new Error(
+        existingSession.result === "login_required"
+          ? "BOOKING_SESSION_EXPIRED"
+          : "BOOKING_MANUAL_REAUTH_REQUIRED"
+      );
+    }
+
     const authStatus = await ensureBookingAuthenticated(session);
     if (authStatus !== "ok") {
       const message =
@@ -236,18 +448,22 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
           : "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR";
       throw new Error(message);
     }
+
     const result = await scrapeReviewsWithSession(session);
-    await saveCookies(session.context, companyId);
+    await savePersistedSession(session.context, companyId, "storageState");
+    await saveMetadata(companyId, {
+      lastScrapeAt: new Date().toISOString(),
+      lastScrapeResult: "success",
+    });
     return result;
   } finally {
-    await session.browser.close();
+    await session.context.close().catch(() => undefined);
+    await session.browser.close().catch(() => undefined);
   }
 }
 
-export async function createBookingSession(companyId: string): Promise<BookingSession> {
-  console.log("[SCRAPER] Iniciando proceso para company:", companyId);
-
-  const browser = await chromium.launch({
+export async function createBrowser(): Promise<Browser> {
+  return chromium.launch({
     headless: true,
     args: [
       "--disable-blink-features=AutomationControlled",
@@ -260,7 +476,13 @@ export async function createBookingSession(companyId: string): Promise<BookingSe
       "--start-maximized",
     ],
   });
+}
 
+export async function createContextWithPersistedSession(
+  browser: Browser,
+  companyId: string,
+  loadPersisted = true
+): Promise<BrowserContext> {
   const context = await browser.newContext({
     userAgent: getUserAgent(),
     viewport: { width: 1920, height: 1080 },
@@ -269,7 +491,21 @@ export async function createBookingSession(companyId: string): Promise<BookingSe
     permissions: ["geolocation"],
   });
 
-  await loadCookies(context, companyId);
+  if (loadPersisted) {
+    await loadPersistedSession(context, companyId);
+  } else {
+    await loadCookies(context, companyId);
+  }
+
+  return context;
+}
+
+export async function createBookingSession(companyId: string, loadPersisted = true): Promise<BookingSession> {
+  console.log("[SCRAPER] Iniciando proceso para company:", companyId);
+
+  const browser = await createBrowser();
+  const context = await createContextWithPersistedSession(browser, companyId, loadPersisted);
+
   const page = await context.newPage();
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
@@ -843,6 +1079,50 @@ async function looksLikeTwoFactor(page: Page): Promise<boolean> {
   return detectTwoFactor(bodyText);
 }
 
+export async function checkExistingBookingSession(
+  session: BookingSession
+): Promise<{
+  result: AuthCheckResult;
+  url: string;
+  title: string;
+}> {
+  const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
+  const { page, companyId } = session;
+
+  await page.goto(getBookingHomeUrl(baseUrl), { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(2500);
+
+  const state = await describeAuthState(page);
+
+  let result: AuthCheckResult;
+  switch (state.state) {
+    case "login_full":
+    case "login_username":
+    case "login_password":
+      result = "login_required";
+      break;
+    case "two_factor":
+    case "two_factor_email":
+      result = "two_factor_required";
+      break;
+    case "security_check":
+      result = "security_block";
+      break;
+    default:
+      result = isBookingLoginUrl(state.url, getEnvOrThrow("BOOKING_LOGIN_URL")) || (await looksLikeLogin(page))
+        ? "login_required"
+        : "ok";
+      break;
+  }
+
+  await saveMetadata(companyId, {
+    lastValidationAt: new Date().toISOString(),
+    lastValidationResult: result,
+  });
+
+  return { result, url: state.url, title: state.title };
+}
+
 export async function describeAuthState(page: Page): Promise<{
   state: BookingAuthState;
   url: string;
@@ -1372,5 +1652,5 @@ export async function scrapeReviewsWithSession(
 }
 
 export async function persistCookies(session: BookingSession): Promise<void> {
-  await saveCookies(session.context, session.companyId);
+  await savePersistedSession(session.context, session.companyId, "storageState");
 }

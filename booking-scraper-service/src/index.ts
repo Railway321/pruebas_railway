@@ -6,13 +6,22 @@ import {
   describeAuthState,
   ensureBookingAuthenticated,
   persistCookies,
+  scrapeBookingReviews,
   scrapeReviewsWithSession,
   submitTwoFactorCode,
   requestTwoFactorCode,
   selectPhoneOption,
   selectTwoFactorMethod,
   extractPhoneOptions,
+  checkExistingBookingSession,
+  loadPersistedSession,
+  savePersistedSession,
+  storePersistedSession,
+  deletePersistedSession,
+  getSessionStatus,
+  saveScreenshot,
   type BookingSession,
+  type AuthCheckResult,
 } from "./booking-scraper.js";
 
 const app = express();
@@ -90,6 +99,77 @@ setInterval(cleanupExpiredSessions, 60 * 1000).unref();
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
+});
+
+app.post("/session/:companyId", requireApiKey, async (req: Request, res: Response) => {
+  const companyId = (req.params.companyId || "").trim();
+  const { cookies, storageState } = req.body || {};
+
+  if (!companyId) {
+    return res.status(400).json({ success: false, error: "companyId requerido" });
+  }
+
+  if (!Array.isArray(cookies) && !storageState) {
+    return res.status(400).json({ success: false, error: "cookies o storageState requeridos" });
+  }
+
+  try {
+    await storePersistedSession(companyId, { cookies, storageState });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo guardar la sesión" });
+  }
+});
+
+app.post("/session/:companyId/validate", requireApiKey, async (req: Request, res: Response) => {
+  const companyId = (req.params.companyId || "").trim();
+
+  if (!companyId) {
+    return res.status(400).json({ success: false, error: "companyId requerido" });
+  }
+
+  try {
+    const session = await createBookingSession(companyId);
+    try {
+      const authState = await checkExistingBookingSession(session);
+      res.json({ success: authState.result === "ok", authState: authState.result, url: authState.url, title: authState.title });
+    } finally {
+      await session.context.close().catch(() => undefined);
+      await session.browser.close().catch(() => undefined);
+    }
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo validar la sesión" });
+  }
+});
+
+app.get("/session/:companyId/status", requireApiKey, async (req: Request, res: Response) => {
+  const companyId = (req.params.companyId || "").trim();
+
+  if (!companyId) {
+    return res.status(400).json({ success: false, error: "companyId requerido" });
+  }
+
+  try {
+    const status = await getSessionStatus(companyId);
+    res.json({ success: true, ...status });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo consultar la sesión" });
+  }
+});
+
+app.delete("/session/:companyId", requireApiKey, async (req: Request, res: Response) => {
+  const companyId = (req.params.companyId || "").trim();
+
+  if (!companyId) {
+    return res.status(400).json({ success: false, error: "companyId requerido" });
+  }
+
+  try {
+    await deletePersistedSession(companyId);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo borrar la sesión" });
+  }
 });
 
 app.get("/debug/last-2fa-screenshot", requireApiKey, async (_req, res) => {
@@ -182,40 +262,75 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
     const startTime = Date.now();
     const result = await withLock(companyId, async () => {
       const session = await createBookingSession(companyId);
-      const authStatus = await ensureBookingAuthenticated(session);
+      try {
+        const existingSession = await checkExistingBookingSession(session);
 
-      const isTwoFactor = typeof authStatus === "object" && authStatus.status === "2fa_required";
-      if (isTwoFactor) {
-        const authState = await logAuthState(session.page, "2FA session created");
-        const sessionId = randomUUID();
-        const expiresAt = Date.now() + SESSION_TTL_MS;
-        const twoFactorType = (authStatus as any).twoFactorType || mapStateToTwoFactorType(authState.state);
-        twoFactorSessions.set(sessionId, {
-          session,
-          expiresAt,
-          status: "waiting_2fa",
-          twoFactorType,
-        });
-        return {
-          type: "two_factor",
-          sessionId,
-          expiresAt,
-          phoneOptions: (authStatus as any).phoneOptions || [],
-          twoFactorType,
-          authState,
-        } as const;
+        if (existingSession.result === "ok") {
+          const scrapeResult = await scrapeReviewsWithSession(session);
+          await savePersistedSession(session.context, companyId, "storageState");
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+          return { type: "result", data: scrapeResult } as const;
+        }
+
+        if (existingSession.result === "security_block") {
+          await saveScreenshot(session.page, companyId, "security-block");
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+          throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
+        }
+
+        if (String(process.env.BOOKING_ENABLE_AUTOMATED_LOGIN || "true").toLowerCase() === "false") {
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+          throw new Error(
+            existingSession.result === "login_required"
+              ? "BOOKING_SESSION_EXPIRED"
+              : "BOOKING_MANUAL_REAUTH_REQUIRED"
+          );
+        }
+
+        const authStatus = await ensureBookingAuthenticated(session);
+        const isTwoFactor = typeof authStatus === "object" && authStatus.status === "2fa_required";
+        if (isTwoFactor) {
+          const authState = await logAuthState(session.page, "2FA session created");
+          const sessionId = randomUUID();
+          const expiresAt = Date.now() + SESSION_TTL_MS;
+          const twoFactorType = authStatus.twoFactorType || mapStateToTwoFactorType(authState.state);
+          twoFactorSessions.set(sessionId, {
+            session,
+            expiresAt,
+            status: "waiting_2fa",
+            twoFactorType,
+          });
+          return {
+            type: "two_factor",
+            sessionId,
+            expiresAt,
+            phoneOptions: authStatus.phoneOptions || [],
+            twoFactorType,
+            authState,
+          } as const;
+        }
+
+        if (authStatus !== "ok") {
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+          return { type: "error", status: authStatus } as const;
+        }
+
+        const scrapeResult = await scrapeReviewsWithSession(session);
+        await savePersistedSession(session.context, companyId, "storageState");
+        await session.context.close().catch(() => undefined);
+        await session.browser.close().catch(() => undefined);
+        return { type: "result", data: scrapeResult } as const;
+      } catch (error) {
+        if (!twoFactorSessions || !Array.from(twoFactorSessions.values()).some((entry) => entry.session === session)) {
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+        }
+        throw error;
       }
-
-      if (authStatus !== "ok") {
-        await session.browser.close();
-        return { type: "error", status: authStatus } as const;
-      }
-
-      const scrapeResult = await scrapeReviewsWithSession(session);
-      await persistCookies(session);
-      await session.context.close();
-      await session.browser.close();
-      return { type: "result", data: scrapeResult } as const;
     });
 
     const duration = Date.now() - startTime;
@@ -262,6 +377,12 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         ? 409
         : message === "BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA"
         ? 503
+        : message === "BOOKING_SESSION_MISSING"
+        ? 409
+        : message === "BOOKING_SESSION_EXPIRED"
+        ? 401
+        : message === "BOOKING_MANUAL_REAUTH_REQUIRED"
+        ? 409
         : message === "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR"
         ? 502
         : 500;
@@ -533,7 +654,7 @@ app.post(
         }
 
         const scrapeResult = await scrapeReviewsWithSession(entry.session);
-        await persistCookies(entry.session);
+        await savePersistedSession(entry.session.context, companyId, "storageState");
         await entry.session.context.close();
         await entry.session.browser.close();
         twoFactorSessions.delete(sessionId);
