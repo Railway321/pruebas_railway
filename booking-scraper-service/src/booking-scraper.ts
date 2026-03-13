@@ -576,8 +576,23 @@ function detectEmailOtp(bodyText: string, url: string): boolean {
 }
 
 async function hasVisibleSelector(page: Page, selector: string): Promise<boolean> {
-  const locator = page.locator(selector).first();
-  return locator.isVisible().catch(() => false);
+  const locator = page.locator(selector);
+  const count = await locator.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const item = locator.nth(i);
+    if (await item.isVisible().catch(() => false)) return true;
+  }
+  return false;
+}
+
+async function getFirstVisibleLocator(page: Page, selector: string): Promise<ReturnType<Page["locator"]> | null> {
+  const locator = page.locator(selector);
+  const count = await locator.count().catch(() => 0);
+  for (let i = 0; i < count; i++) {
+    const item = locator.nth(i);
+    if (await item.isVisible().catch(() => false)) return item;
+  }
+  return null;
 }
 
 async function logVisibleInputs(page: Page, context: string): Promise<void> {
@@ -665,7 +680,12 @@ async function resolveLoginIdentifier(
   const usernameSelector = LOGIN_USERNAME_SELECTOR;
   const hints = await page
     .evaluate((selector) => {
-      const input = document.querySelector(selector) as HTMLInputElement | null;
+      const inputs = Array.from(document.querySelectorAll(selector)) as HTMLInputElement[];
+      const visibleInput = inputs.find((input) => {
+        const style = window.getComputedStyle(input);
+        return style.visibility !== "hidden" && style.display !== "none" && input.offsetParent !== null;
+      });
+      const input = visibleInput || inputs[0];
       if (!input) return "";
       const labelText = input.labels ? Array.from(input.labels).map((l) => l.textContent || "").join(" ") : "";
       const ariaLabel = input.getAttribute("aria-label") || "";
@@ -1417,7 +1437,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       await saveScreenshot(page, companyId, "02a-before-username-submit");
     } catch (e: any) {}
     
-    const usernameInput = page.locator(usernameSelector).first();
+    const usernameInput = (await getFirstVisibleLocator(page, usernameSelector)) || page.locator(usernameSelector).first();
     const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     await usernameInput.fill("").catch(() => undefined);
     await usernameInput.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
@@ -1489,7 +1509,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   }
 
   if (usernameInputAfterVisible) {
-    const usernameInputAfter = page.locator(usernameSelector).first();
+    const usernameInputAfter = (await getFirstVisibleLocator(page, usernameSelector)) || page.locator(usernameSelector).first();
     const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     const currentValue = await usernameInputAfter.inputValue().catch(() => "");
     if (!currentValue) {
@@ -1499,7 +1519,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     }
   }
 
-  const passwordInputAfter = page.locator(passwordSelector).first();
+  const passwordInputAfter = (await getFirstVisibleLocator(page, passwordSelector)) || page.locator(passwordSelector).first();
   await passwordInputAfter.fill("").catch(() => undefined);
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await logInputValueLengths(page, "after password fill");
