@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   createBookingSession,
@@ -247,6 +248,31 @@ app.get("/debug/last-login-screenshot", requireApiKey, async (_req, res) => {
       success: false,
       error: error?.message || "No se pudo leer la captura de login",
     });
+  }
+});
+
+app.get("/debug/screenshots", requireApiKey, async (_req, res) => {
+  try {
+    const cookieDir = process.env.BOOKING_COOKIES_DIR || path.join(process.cwd(), "cookies");
+    const files = await fs.readdir(cookieDir);
+    const screenshots = files
+      .filter(f => f.endsWith(".png"))
+      .map(async (f) => {
+        const filePath = path.join(cookieDir, f);
+        const stats = await fs.stat(filePath);
+        const data = await fs.readFile(filePath);
+        return {
+          filename: f,
+          path: filePath,
+          size: stats.size,
+          modified: stats.mtime.toISOString(),
+          base64: data.toString("base64"),
+        };
+      });
+    const allScreenshots = await Promise.all(screenshots);
+    res.json({ success: true, screenshots: allScreenshots });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message });
   }
 });
 
