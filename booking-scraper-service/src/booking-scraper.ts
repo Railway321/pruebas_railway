@@ -563,7 +563,7 @@ function detectSecurityChallenge(text: string, title = "", url = ""): boolean {
   return (
     haystack.includes("captcha") ||
     haystack.includes("unusual activity") ||
-    haystack.includes("blocked") ||
+    haystack.includes("human verification") ||
     haystack.includes("déjanos comprobar que eres una persona") ||
     haystack.includes("dejanos comprobar que eres una persona") ||
     haystack.includes("let us check you're human") ||
@@ -625,6 +625,40 @@ async function logInputValueLengths(page: Page, context: string): Promise<void> 
     );
   } catch (error) {
     console.log(`[SCRAPER] Failed to read input lengths (${context})`);
+  }
+}
+
+async function logDetailedPageState(page: Page, step: string): Promise<void> {
+  try {
+    const url = page.url();
+    const title = await page.title().catch(() => "N/A");
+    const bodyText = ((await page.textContent("body")) || "").substring(0, 500);
+    
+    const [hasUsername, hasPassword, hasPlaceholderPassword] = await Promise.all([
+      hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR),
+      hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR),
+      hasVisibleSelector(page, LOGIN_PLACEHOLDER_PASSWORD_SELECTOR),
+    ]);
+    
+    const buttons = await page
+      .evaluate(() =>
+        Array.from(document.querySelectorAll("button, input[type='submit']"))
+          .map((el) => el.textContent?.trim() || el.getAttribute("value") || el.getAttribute("name") || "button")
+          .slice(0, 10)
+      )
+      .catch(() => []);
+    
+    console.log(`[SCRAPER] === STEP: ${step} ===`);
+    console.log(`[SCRAPER] URL: ${url}`);
+    console.log(`[SCRAPER] Title: ${title}`);
+    console.log(`[SCRAPER] Has username field: ${hasUsername}`);
+    console.log(`[SCRAPER] Has password field: ${hasPassword}`);
+    console.log(`[SCRAPER] Has placeholder password: ${hasPlaceholderPassword}`);
+    console.log(`[SCRAPER] Buttons found: ${buttons.join(", ")}`);
+    console.log(`[SCRAPER] Body preview: ${bodyText.substring(0, 200)}...`);
+    console.log(`[SCRAPER] ======================`);
+  } catch (error) {
+    console.log(`[SCRAPER] Failed to log page state (${step}):`, error);
   }
 }
 
@@ -1324,6 +1358,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     return "ok";
   }
 
+  await logDetailedPageState(page, "ABOUT_TO_START_LOGIN_FLOW");
+  
   const bodyTextRaw = (await page.textContent("body")) || "";
   const bodyText = bodyTextRaw.toLowerCase();
 
@@ -1370,6 +1406,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     `[SCRAPER] Auth state after login load: ${initialState.state} | ${initialState.title} | ${initialState.url}`
   );
   await logVisibleInputs(page, "after login load");
+  await logDetailedPageState(page, "LOGIN_PAGE_LOADED");
   
   try {
     await saveScreenshot(page, companyId, "01-login-page-loaded");
@@ -1382,6 +1419,11 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   const hasPasswordVisible = await hasVisibleSelector(page, passwordSelector);
 
   if (hasUsernameVisible && !hasPasswordVisible) {
+    await logDetailedPageState(page, "BEFORE_USERNAME_SUBMIT");
+    try {
+      await saveScreenshot(page, companyId, "02a-before-username-submit");
+    } catch (e: any) {}
+    
     const usernameInput = page.locator(usernameSelector).first();
     const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     await usernameInput.fill("").catch(() => undefined);
@@ -1399,6 +1441,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     console.log(
       `[SCRAPER] Username submit resolved to ${progressState.state} | ${progressState.url}`
     );
+    await logDetailedPageState(page, "AFTER_USERNAME_SUBMIT");
     
     try {
       await saveScreenshot(page, companyId, "02-after-username-submit");
@@ -1425,6 +1468,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       `[SCRAPER] Auth state before password entry: ${state.state} | ${state.title} | ${state.url}`
     );
     await logVisibleInputs(page, "before password entry");
+    await logDetailedPageState(page, "BEFORE_PASSWORD_ENTRY");
     
     try {
       await saveScreenshot(page, companyId, "04-before-password-entry");
@@ -1466,6 +1510,12 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await passwordInputAfter.fill("").catch(() => undefined);
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await logInputValueLengths(page, "after password fill");
+  await logDetailedPageState(page, "BEFORE_PASSWORD_SUBMIT");
+  
+  try {
+    await saveScreenshot(page, companyId, "05a-before-password-submit");
+  } catch (e: any) {}
+  
   await humanDelay(page);
   await submitLoginStep(page, passwordInputAfter, submitLocators, "After password", [
     "security_check",
@@ -1477,6 +1527,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await humanDelay(page, 3500, 5500);
   await randomScroll(page);
 
+  await logDetailedPageState(page, "AFTER_PASSWORD_SUBMIT");
+  
   try {
     await saveScreenshot(page, companyId, "06-after-password-submit");
     console.log("[DEBUG] Screenshot saved after password submit");
@@ -1513,6 +1565,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     const updatedBody = updatedBodyRaw.toLowerCase();
 
     await logVisibleInputs(page, "after login submit");
+    await logDetailedPageState(page, "LOGIN_FAILED_ANALYSIS");
     const invalidPath = `/tmp/booking-login-invalid-${Date.now()}.png`;
     await page.screenshot({ path: invalidPath, fullPage: true }).catch(() => undefined);
     await fs.writeFile("/tmp/booking-login-last.txt", invalidPath).catch(() => undefined);
@@ -1530,7 +1583,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     if (
       updatedBody.includes("unusual activity") ||
       updatedBody.includes("captcha") ||
-      updatedBody.includes("blocked")
+      updatedBody.includes("human verification")
     ) {
       return "security_block";
     }
