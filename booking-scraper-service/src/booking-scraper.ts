@@ -613,6 +613,21 @@ async function waitForVisibleSelector(page: Page, selector: string, timeoutMs = 
   return false;
 }
 
+async function waitForNextLoginStep(
+  page: Page,
+  initialUrl: string,
+  passwordSelector: string,
+  timeoutMs = 12000
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const hasPassword = await hasVisibleSelector(page, passwordSelector);
+    const urlChanged = page.url() !== initialUrl;
+    if (hasPassword || urlChanged) return;
+    await page.waitForTimeout(500);
+  }
+}
+
 async function logVisibleInputs(page: Page, context: string): Promise<void> {
   try {
     const inputs = await page
@@ -1476,7 +1491,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
     if (progressState.state === "login_username") {
       console.log("[SCRAPER] Still on username step; waiting for password field...");
-      await waitForVisibleSelector(page, passwordSelector, 10000);
+      const beforeUrl = page.url();
+      await waitForNextLoginStep(page, beforeUrl, passwordSelector, 12000);
       await logDetailedPageState(page, "AFTER_USERNAME_WAIT_PASSWORD");
     }
     
