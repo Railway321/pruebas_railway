@@ -213,6 +213,7 @@ export type AuthStatus =
 type BookingAuthState =
   | "two_factor"
   | "two_factor_email"
+  | "security_check"
   | "login_username"
   | "login_password"
   | "login_full"
@@ -289,6 +290,20 @@ function detectTwoFactor(bodyText: string): boolean {
     bodyText.includes("send verification") ||
     bodyText.includes("enviar código") ||
     bodyText.includes("enviar codigo")
+  );
+}
+
+function detectSecurityChallenge(text: string, title = "", url = ""): boolean {
+  const haystack = `${text} ${title} ${url}`.toLowerCase();
+  return (
+    haystack.includes("captcha") ||
+    haystack.includes("unusual activity") ||
+    haystack.includes("blocked") ||
+    haystack.includes("déjanos comprobar que eres una persona") ||
+    haystack.includes("dejanos comprobar que eres una persona") ||
+    haystack.includes("let us check you're human") ||
+    haystack.includes("prove you're human") ||
+    haystack.includes("verifica que eres una persona")
   );
 }
 
@@ -823,17 +838,13 @@ async function looksLikeTwoFactor(page: Page): Promise<boolean> {
     if (await page.$(selector)) return true;
   }
   const bodyText = ((await page.textContent("body")) || "").toLowerCase();
+  const title = await page.title().catch(() => "");
+  if (detectSecurityChallenge(bodyText, title, page.url())) return false;
   return detectTwoFactor(bodyText);
 }
 
 export async function describeAuthState(page: Page): Promise<{
-  state:
-    | "two_factor"
-    | "two_factor_email"
-    | "login_username"
-    | "login_password"
-    | "login_full"
-    | "unknown";
+  state: BookingAuthState;
   url: string;
   title: string;
 }> {
@@ -843,25 +854,30 @@ export async function describeAuthState(page: Page): Promise<{
     hasVisibleSelector(page, LOGIN_PLACEHOLDER_PASSWORD_SELECTOR),
   ]);
 
+  const bodyText = ((await page.textContent("body")) || "").toLowerCase();
+  const title = await page.title();
+  if (detectSecurityChallenge(bodyText, title, page.url())) {
+    return { state: "security_check", url: page.url(), title };
+  }
+
   if (await looksLikeTwoFactor(page)) {
-    const bodyText = ((await page.textContent("body")) || "").toLowerCase();
     const state = detectEmailOtp(bodyText, page.url()) ? "two_factor_email" : "two_factor";
-    return { state, url: page.url(), title: await page.title() };
+    return { state, url: page.url(), title };
   }
 
   if (hasUsername && hasPassword) {
-    return { state: "login_full", url: page.url(), title: await page.title() };
+    return { state: "login_full", url: page.url(), title };
   }
 
   if (hasUsername && !hasPassword) {
-    return { state: "login_username", url: page.url(), title: await page.title() };
+    return { state: "login_username", url: page.url(), title };
   }
 
   if (!hasUsername && (hasPassword || hasPlaceholderPassword)) {
-    return { state: "login_password", url: page.url(), title: await page.title() };
+    return { state: "login_password", url: page.url(), title };
   }
 
-  return { state: "unknown", url: page.url(), title: await page.title() };
+  return { state: "unknown", url: page.url(), title };
 }
 
 async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): Promise<boolean> {
@@ -938,6 +954,7 @@ async function waitForAuthProgress(page: Page, label: string): Promise<{
       state.state === "login_username" ||
       state.state === "login_password" ||
       state.state === "login_full" ||
+      state.state === "security_check" ||
       state.state === "two_factor" ||
       state.state === "two_factor_email"
     ) {
@@ -1036,6 +1053,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     const progressState = await submitLoginStep(page, usernameInput, submitLocators, "After username", [
       "login_password",
       "login_full",
+      "security_check",
       "two_factor",
       "two_factor_email",
       "unknown",
@@ -1043,6 +1061,10 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     console.log(
       `[SCRAPER] Username submit resolved to ${progressState.state} | ${progressState.url}`
     );
+    if (progressState.state === "security_check") {
+      await saveDebugScreenshot(page, "booking-login-security-check");
+      return "security_block";
+    }
   }
 
   const passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
@@ -1054,6 +1076,10 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       `[SCRAPER] Auth state before password entry: ${state.state} | ${state.title} | ${state.url}`
     );
     await logVisibleInputs(page, "before password entry");
+    if (state.state === "security_check") {
+      await saveDebugScreenshot(page, "booking-login-security-check");
+      return "security_block";
+    }
     if (state.state === "two_factor") {
       const currentBody = ((await page.textContent("body")) || "").toLowerCase();
       const twoFactorType = detectEmailOtp(currentBody, page.url()) ? "email" : "phone";
@@ -1082,6 +1108,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await logInputValueLengths(page, "after password fill");
   await humanDelay(page);
   await submitLoginStep(page, passwordInputAfter, submitLocators, "After password", [
+    "security_check",
     "two_factor",
     "two_factor_email",
     "unknown",
@@ -1089,6 +1116,12 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   await humanDelay(page, 3500, 5500);
   await randomScroll(page);
+
+  const postPasswordBody = ((await page.textContent("body")) || "").toLowerCase();
+  if (detectSecurityChallenge(postPasswordBody, await page.title().catch(() => ""), page.url())) {
+    await saveDebugScreenshot(page, "booking-login-security-check");
+    return "security_block";
+  }
 
   if (await looksLikeTwoFactor(page)) {
     const updatedBodyRaw = (await page.textContent("body")) || "";
