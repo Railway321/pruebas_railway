@@ -105,6 +105,18 @@ function getUserAgent(): string {
   return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 }
 
+function buildBookingUrl(baseUrl: string, path: string): string {
+  const parsed = new URL(baseUrl);
+  parsed.pathname = path;
+  parsed.searchParams.delete("ses");
+  parsed.searchParams.delete("t");
+  return parsed.toString();
+}
+
+function getBookingHomeUrl(baseUrl: string): string {
+  return buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/home.html");
+}
+
 async function randomScroll(page: any) {
   const scrolls = Math.floor(Math.random() * 3) + 1;
   for (let i = 0; i < scrolls; i++) {
@@ -852,7 +864,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   const { page, context, companyId } = session;
 
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await page.goto(getBookingHomeUrl(baseUrl), { waitUntil: "domcontentloaded" });
   await humanDelay(page);
   await randomScroll(page);
 
@@ -974,6 +986,9 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     return { status: "2fa_required", phoneOptions: [], twoFactorType };
   }
 
+  await page.goto(getBookingHomeUrl(baseUrl), { waitUntil: "domcontentloaded" }).catch(() => undefined);
+  await humanDelay(page, 1500, 2500);
+
   const finalState = await describeAuthState(page);
   console.log(
     `[SCRAPER] Final auth state after password submit: ${finalState.state} | ${finalState.title} | ${finalState.url}`
@@ -1094,17 +1109,18 @@ export async function scrapeReviewsWithSession(
   if (reviewsUrl) {
     await page.goto(reviewsUrl, { waitUntil: "networkidle" });
   } else {
-    const candidatePaths = [
-      "/hotel/hoteladmin/extranet_ng/manage/reviews.html",
-      "/hotel/hoteladmin/extranet_ng/manage/review.html",
-      "/hotel/hoteladmin/extranet_ng/manage/guest_reviews.html",
-      "/reviews",
+    const candidateUrls = [
+      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/reviews.html"),
+      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/review.html"),
+      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/guest_reviews.html"),
+      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/home.html"),
+      new URL("/reviews", baseUrl).toString(),
     ];
 
     let navigated = false;
-    for (const path of candidatePaths) {
+    for (const candidateUrl of candidateUrls) {
       try {
-        await page.goto(`${baseUrl}${path}`, { waitUntil: "networkidle" });
+        await page.goto(candidateUrl, { waitUntil: "networkidle" });
         navigated = true;
         break;
       } catch {
