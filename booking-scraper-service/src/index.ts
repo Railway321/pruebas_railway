@@ -136,7 +136,18 @@ app.get("/debug/last-login-screenshot", requireApiKey, async (_req, res) => {
   try {
     let screenshotPath: string | null = lastLoginScreenshotPath;
     if (!screenshotPath) {
-      screenshotPath = (await fs.readFile("/tmp/booking-login-last.txt", "utf8").catch(() => "")).trim();
+      const candidates = [
+        "/tmp/booking-login-security-check-last.txt",
+        "/tmp/booking-login-invalid-last.txt",
+        "/tmp/booking-login-last.txt",
+      ];
+      for (const candidate of candidates) {
+        const resolved = (await fs.readFile(candidate, "utf8").catch(() => "")).trim();
+        if (resolved) {
+          screenshotPath = resolved;
+          break;
+        }
+      }
     }
     if (!screenshotPath) {
       return res.status(404).json({
