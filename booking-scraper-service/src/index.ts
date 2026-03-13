@@ -301,14 +301,23 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         }
 
         if (existingSession.result === "security_block") {
+          console.log("[DEBUG] security_block detected");
+          console.log("[DEBUG] page.isClosed():", session.page.isClosed());
+          console.log("[DEBUG] browser.isConnected():", session.browser.isConnected());
           console.log("[SCRAPER] Security block detected, taking screenshot...");
-          await saveScreenshot(session.page, companyId, "security-block");
+          try {
+            await saveScreenshot(session.page, companyId, "security-block");
+            console.log("[DEBUG] Screenshot saved successfully!");
+          } catch (screenshotError: any) {
+            console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
+          }
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
           throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
         }
 
         if (existingSession.result === "login_required") {
+          console.log("[DEBUG] login_required detected, taking screenshot...");
           await saveScreenshot(session.page, companyId, "login-required");
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
@@ -316,6 +325,7 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         }
 
         if (existingSession.result === "two_factor_required") {
+          console.log("[DEBUG] two_factor_required detected, taking screenshot...");
           await saveScreenshot(session.page, companyId, "two-factor-required");
         }
 
