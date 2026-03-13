@@ -155,12 +155,24 @@ export async function loadPersistedSession(
   try {
     await ensureCookieDir();
 
+    const normalizeCookies = (cookies: any[]): any[] => {
+      const validSameSite = ["Strict", "Lax", "None"];
+      return cookies.map(cookie => {
+        const sameSite = String(cookie.sameSite || "").toLowerCase();
+        return {
+          ...cookie,
+          sameSite: validSameSite.includes(sameSite) ? sameSite.charAt(0).toUpperCase() + sameSite.slice(1) : "Lax",
+        };
+      });
+    };
+
     const storageStatePath = getStorageStatePath(companyId);
     if (await fileExists(storageStatePath)) {
       const raw = await fs.readFile(storageStatePath, "utf8");
       const storageState = JSON.parse(raw);
       if (Array.isArray(storageState?.cookies) && storageState.cookies.length > 0) {
-        await context.addCookies(storageState.cookies);
+        const normalizedCookies = normalizeCookies(storageState.cookies);
+        await context.addCookies(normalizedCookies);
         await saveMetadata(companyId, {
           format: "storageState",
           lastLoadedAt: new Date().toISOString(),
@@ -175,7 +187,8 @@ export async function loadPersistedSession(
       const raw = await fs.readFile(cookiesPath, "utf8");
       const cookies = JSON.parse(raw);
       if (Array.isArray(cookies) && cookies.length > 0) {
-        await context.addCookies(cookies);
+        const normalizedCookies = normalizeCookies(cookies);
+        await context.addCookies(normalizedCookies);
         await saveMetadata(companyId, {
           format: "cookies",
           lastLoadedAt: new Date().toISOString(),
