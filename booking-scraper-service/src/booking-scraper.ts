@@ -1214,9 +1214,11 @@ export async function describeAuthState(page: Page): Promise<{
 
   const bodyText = ((await page.textContent("body")) || "").toLowerCase();
   const title = await page.title();
-  if (detectSecurityChallenge(bodyText, title, page.url())) {
-    return { state: "security_check", url: page.url(), title };
-  }
+  
+  // TEMPORARILY DISABLED: detectSecurityChallenge is causing false positives on normal login page
+  // if (detectSecurityChallenge(bodyText, title, page.url())) {
+  //   return { state: "security_check", url: page.url(), title };
+  // }
 
   if (await looksLikeTwoFactor(page)) {
     const state = detectEmailOtp(bodyText, page.url()) ? "two_factor_email" : "two_factor";
