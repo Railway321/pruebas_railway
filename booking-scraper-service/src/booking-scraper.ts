@@ -125,6 +125,10 @@ function isContextualHotelLogin(url: string): boolean {
   return url.includes("op_token=") && url.includes("hotel_id=");
 }
 
+function isBookingSsoUrl(url: string): boolean {
+  return url.includes("bookingholdings.okta.com/") || url.includes("corpsso.booking.com/");
+}
+
 async function randomScroll(page: any) {
   const scrolls = Math.floor(Math.random() * 3) + 1;
   for (let i = 0; i < scrolls; i++) {
@@ -849,6 +853,7 @@ async function waitForAuthProgress(page: Page, label: string): Promise<{
       `[SCRAPER] ${label} attempt ${attempt + 1}/12 | state=${state.state} | title=${state.title} | url=${state.url}`
     );
     if (
+      state.state === "login_username" ||
       state.state === "login_password" ||
       state.state === "login_full" ||
       state.state === "two_factor" ||
@@ -877,6 +882,13 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await randomScroll(page);
 
   console.log(`[SCRAPER] Current URL after base load: ${page.url()}`);
+
+  if (isBookingSsoUrl(page.url())) {
+    const ssoState = await waitForAuthProgress(page, "Waiting SSO redirect");
+    console.log(
+      `[SCRAPER] SSO redirect resolved to ${ssoState.state} | ${ssoState.url}`
+    );
+  }
 
   if (!isBookingLoginUrl(page.url(), loginUrl) && !(await looksLikeLogin(page))) {
     return "ok";
@@ -1164,6 +1176,17 @@ export async function scrapeReviewsWithSession(
   console.log(
     `[SCRAPER] Auth state before export lookup: ${reviewAuthState.state} | ${reviewAuthState.title} | ${reviewAuthState.url}`
   );
+
+  if (
+    reviewAuthState.state === "login_username" ||
+    reviewAuthState.state === "login_password" ||
+    reviewAuthState.state === "login_full" ||
+    reviewAuthState.state === "two_factor" ||
+    reviewAuthState.state === "two_factor_email"
+  ) {
+    throw new Error("BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS");
+  }
+
   await saveDebugScreenshot(page, "booking-before-export");
 
   const exportCandidates = [

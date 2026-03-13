@@ -247,6 +247,8 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         ? 401
         : message === "BOOKING_AUTH_2FA_REQUIRED"
         ? 401
+        : message === "BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS"
+        ? 409
         : message === "BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA"
         ? 503
         : message === "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR"
