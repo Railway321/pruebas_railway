@@ -254,6 +254,7 @@ app.get("/debug/last-login-screenshot", requireApiKey, async (_req, res) => {
 app.get("/debug/screenshots", requireApiKey, async (_req, res) => {
   try {
     const cookieDir = process.env.BOOKING_COOKIES_DIR || path.join(process.cwd(), "cookies");
+    await fs.mkdir(cookieDir, { recursive: true });
     const files = await fs.readdir(cookieDir);
     const screenshots = files
       .filter(f => f.endsWith(".png"))
