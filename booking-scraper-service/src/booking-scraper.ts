@@ -148,7 +148,13 @@ const LOGIN_USERNAME_SELECTOR = [
   'input[type="text"]',
 ].join(", ");
 
-const LOGIN_PASSWORD_SELECTOR = 'input[type="password"], input[name*="password"], input[id*="password"]';
+const LOGIN_PASSWORD_SELECTOR = [
+  'input[type="password"]:not([id="hidden-password"])',
+  'input[name*="password"]:not([id="hidden-password"])',
+  'input[id*="password"]:not([id="hidden-password"])',
+].join(", ");
+
+const LOGIN_PLACEHOLDER_PASSWORD_SELECTOR = 'input[type="password"]#hidden-password';
 
 async function randomScroll(page: any) {
   const scrolls = Math.floor(Math.random() * 3) + 1;
@@ -320,7 +326,11 @@ async function logInputValueLengths(page: Page, context: string): Promise<void> 
   try {
     const [usernameValue, passwordValue] = await Promise.all([
       page.locator(LOGIN_USERNAME_SELECTOR).first().inputValue().catch(() => ""),
-      page.locator(LOGIN_PASSWORD_SELECTOR).first().inputValue().catch(() => ""),
+      page
+        .locator(LOGIN_PASSWORD_SELECTOR)
+        .first()
+        .inputValue()
+        .catch(() => ""),
     ]);
     console.log(
       `[SCRAPER] Input lengths (${context}): username=${usernameValue.length} password=${passwordValue.length}`
@@ -370,11 +380,12 @@ async function resolveLoginIdentifier(
 }
 
 async function hasLoginFields(page: Page): Promise<boolean> {
-  const [hasUsername, hasPassword] = await Promise.all([
+  const [hasUsername, hasPassword, hasPlaceholderPassword] = await Promise.all([
     hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR),
     hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR),
+    hasVisibleSelector(page, LOGIN_PLACEHOLDER_PASSWORD_SELECTOR),
   ]);
-  return Boolean(hasUsername || hasPassword);
+  return Boolean(hasUsername || hasPassword || hasPlaceholderPassword);
 }
 
 export interface PhoneOption {
@@ -782,9 +793,12 @@ export async function requestTwoFactorCode(
 }
 
 async function looksLikeLogin(page: Page): Promise<boolean> {
-  const hasUsername = await hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR);
-  const hasPassword = await hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR);
-  return Boolean(hasUsername || hasPassword);
+  const [hasUsername, hasPassword, hasPlaceholderPassword] = await Promise.all([
+    hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR),
+    hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR),
+    hasVisibleSelector(page, LOGIN_PLACEHOLDER_PASSWORD_SELECTOR),
+  ]);
+  return Boolean(hasUsername || hasPassword || hasPlaceholderPassword);
 }
 
 async function looksLikeTwoFactor(page: Page): Promise<boolean> {
@@ -815,9 +829,10 @@ export async function describeAuthState(page: Page): Promise<{
   url: string;
   title: string;
 }> {
-  const [hasUsername, hasPassword] = await Promise.all([
+  const [hasUsername, hasPassword, hasPlaceholderPassword] = await Promise.all([
     hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR),
     hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR),
+    hasVisibleSelector(page, LOGIN_PLACEHOLDER_PASSWORD_SELECTOR),
   ]);
 
   if (await looksLikeTwoFactor(page)) {
@@ -834,7 +849,7 @@ export async function describeAuthState(page: Page): Promise<{
     return { state: "login_username", url: page.url(), title: await page.title() };
   }
 
-  if (!hasUsername && hasPassword) {
+  if (!hasUsername && (hasPassword || hasPlaceholderPassword)) {
     return { state: "login_password", url: page.url(), title: await page.title() };
   }
 
