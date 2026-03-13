@@ -117,6 +117,14 @@ function getBookingHomeUrl(baseUrl: string): string {
   return buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/home.html");
 }
 
+function isBookingLoginUrl(url: string, loginUrl: string): boolean {
+  return url.startsWith(loginUrl) || url.includes("account.booking.com/sign-in");
+}
+
+function isContextualHotelLogin(url: string): boolean {
+  return url.includes("op_token=") && url.includes("hotel_id=");
+}
+
 async function randomScroll(page: any) {
   const scrolls = Math.floor(Math.random() * 3) + 1;
   for (let i = 0; i < scrolls; i++) {
@@ -870,7 +878,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   console.log(`[SCRAPER] Current URL after base load: ${page.url()}`);
 
-  if (!page.url().startsWith(loginUrl) && !(await looksLikeLogin(page))) {
+  if (!isBookingLoginUrl(page.url(), loginUrl) && !(await looksLikeLogin(page))) {
     return "ok";
   }
 
@@ -891,9 +899,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     }
   }
 
-  await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
-  await humanDelay(page);
-  await randomScroll(page);
+  const contextualLoginUrl = page.url();
+  const shouldUseCurrentLoginPage = isContextualHotelLogin(contextualLoginUrl) || (await looksLikeLogin(page));
+  if (!shouldUseCurrentLoginPage) {
+    await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
+    await humanDelay(page);
+    await randomScroll(page);
+  } else {
+    console.log(`[SCRAPER] Preserving contextual login flow: ${contextualLoginUrl}`);
+  }
 
   const usernameSelector = 'input[name="username"], input[type="email"]';
   const passwordSelector = 'input[type="password"]';
@@ -994,7 +1008,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     `[SCRAPER] Final auth state after password submit: ${finalState.state} | ${finalState.title} | ${finalState.url}`
   );
 
-  if (page.url().startsWith(loginUrl) || (await looksLikeLogin(page))) {
+  if (isBookingLoginUrl(page.url(), loginUrl) || (await looksLikeLogin(page))) {
     const updatedBodyRaw = (await page.textContent("body")) || "";
     const updatedBody = updatedBodyRaw.toLowerCase();
 
