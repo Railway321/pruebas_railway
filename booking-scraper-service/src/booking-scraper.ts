@@ -129,6 +129,27 @@ function isBookingSsoUrl(url: string): boolean {
   return url.includes("bookingholdings.okta.com/") || url.includes("corpsso.booking.com/");
 }
 
+const LOGIN_USERNAME_SELECTOR = [
+  'input[name="username"]',
+  'input[name="identifier"]',
+  'input[name="loginname"]',
+  'input[id="username"]',
+  'input[id="loginname"]',
+  'input[id*="username"]',
+  'input[id*="loginname"]',
+  'input[id*="userid"]',
+  'input[id*="user_id"]',
+  'input[placeholder*="email" i]',
+  'input[placeholder*="correo" i]',
+  'input[placeholder*="usuario" i]',
+  'input[placeholder*="user id" i]',
+  'input[placeholder*="id de usuario" i]',
+  'input[type="email"]',
+  'input[type="text"]',
+].join(", ");
+
+const LOGIN_PASSWORD_SELECTOR = 'input[type="password"], input[name*="password"], input[id*="password"]';
+
 async function randomScroll(page: any) {
   const scrolls = Math.floor(Math.random() * 3) + 1;
   for (let i = 0; i < scrolls; i++) {
@@ -297,11 +318,9 @@ async function logVisibleInputs(page: Page, context: string): Promise<void> {
 
 async function logInputValueLengths(page: Page, context: string): Promise<void> {
   try {
-    const usernameSelector = 'input[name="username"], input[name="identifier"], input[type="email"], input[id*="username"], input[id*="email"]';
-    const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
     const [usernameValue, passwordValue] = await Promise.all([
-      page.locator(usernameSelector).first().inputValue().catch(() => ""),
-      page.locator(passwordSelector).first().inputValue().catch(() => ""),
+      page.locator(LOGIN_USERNAME_SELECTOR).first().inputValue().catch(() => ""),
+      page.locator(LOGIN_PASSWORD_SELECTOR).first().inputValue().catch(() => ""),
     ]);
     console.log(
       `[SCRAPER] Input lengths (${context}): username=${usernameValue.length} password=${passwordValue.length}`
@@ -320,7 +339,7 @@ async function resolveLoginIdentifier(
   if (mode === "email" && email) return email;
   if (mode === "username") return username;
 
-  const usernameSelector = 'input[name="username"], input[name="identifier"], input[type="email"], input[id*="username"], input[id*="email"]';
+  const usernameSelector = LOGIN_USERNAME_SELECTOR;
   const hints = await page
     .evaluate((selector) => {
       const input = document.querySelector(selector) as HTMLInputElement | null;
@@ -340,16 +359,20 @@ async function resolveLoginIdentifier(
     return email;
   }
 
+  const looksLikeUsername = /loginname|username|user id|id de usuario|también llamado|tambien llamado|usuario/.test(hints);
+  if (looksLikeUsername) {
+    console.log("[SCRAPER] Using username identifier based on input hints");
+    return username;
+  }
+
   console.log("[SCRAPER] Using username identifier based on input hints");
   return username;
 }
 
 async function hasLoginFields(page: Page): Promise<boolean> {
-  const usernameSelector = 'input[name="username"], input[type="email"], input[name="identifier"], input[id*="username"], input[id*="email"]';
-  const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
   const [hasUsername, hasPassword] = await Promise.all([
-    hasVisibleSelector(page, usernameSelector),
-    hasVisibleSelector(page, passwordSelector),
+    hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR),
+    hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR),
   ]);
   return Boolean(hasUsername || hasPassword);
 }
@@ -759,10 +782,8 @@ export async function requestTwoFactorCode(
 }
 
 async function looksLikeLogin(page: Page): Promise<boolean> {
-  const usernameSelector = 'input[name="username"], input[type="email"]';
-  const passwordSelector = 'input[type="password"]';
-  const hasUsername = await hasVisibleSelector(page, usernameSelector);
-  const hasPassword = await hasVisibleSelector(page, passwordSelector);
+  const hasUsername = await hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR);
+  const hasPassword = await hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR);
   return Boolean(hasUsername || hasPassword);
 }
 
@@ -794,11 +815,9 @@ export async function describeAuthState(page: Page): Promise<{
   url: string;
   title: string;
 }> {
-  const usernameSelector = 'input[name="username"], input[type="email"]';
-  const passwordSelector = 'input[type="password"]';
   const [hasUsername, hasPassword] = await Promise.all([
-    hasVisibleSelector(page, usernameSelector),
-    hasVisibleSelector(page, passwordSelector),
+    hasVisibleSelector(page, LOGIN_USERNAME_SELECTOR),
+    hasVisibleSelector(page, LOGIN_PASSWORD_SELECTOR),
   ]);
 
   if (await looksLikeTwoFactor(page)) {
@@ -921,8 +940,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     console.log(`[SCRAPER] Preserving contextual login flow: ${contextualLoginUrl}`);
   }
 
-  const usernameSelector = 'input[name="username"], input[type="email"]';
-  const passwordSelector = 'input[type="password"]';
+  const usernameSelector = LOGIN_USERNAME_SELECTOR;
+  const passwordSelector = LOGIN_PASSWORD_SELECTOR;
   const submitLocators = [
     page.getByRole("button", { name: /siguiente/i }),
     page.getByRole("button", { name: /next/i }),
