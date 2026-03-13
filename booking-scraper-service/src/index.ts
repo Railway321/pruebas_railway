@@ -280,14 +280,21 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
           throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
         }
 
+        if (existingSession.result === "login_required") {
+          await saveScreenshot(session.page, companyId, "login-required");
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+          throw new Error("BOOKING_SESSION_EXPIRED");
+        }
+
+        if (existingSession.result === "two_factor_required") {
+          await saveScreenshot(session.page, companyId, "two-factor-required");
+        }
+
         if (String(process.env.BOOKING_ENABLE_AUTOMATED_LOGIN || "true").toLowerCase() === "false") {
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
-          throw new Error(
-            existingSession.result === "login_required"
-              ? "BOOKING_SESSION_EXPIRED"
-              : "BOOKING_MANUAL_REAUTH_REQUIRED"
-          );
+          throw new Error("BOOKING_MANUAL_REAUTH_REQUIRED");
         }
 
         const authStatus = await ensureBookingAuthenticated(session);
@@ -326,6 +333,7 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         return { type: "result", data: scrapeResult } as const;
       } catch (error) {
         if (!twoFactorSessions || !Array.from(twoFactorSessions.values()).some((entry) => entry.session === session)) {
+          await saveScreenshot(session.page, companyId, "error-fallback").catch(() => undefined);
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
         }
