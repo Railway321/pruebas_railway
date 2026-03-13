@@ -559,16 +559,7 @@ function detectTwoFactor(bodyText: string): boolean {
 }
 
 function detectSecurityChallenge(text: string, title = "", url = ""): boolean {
-  const haystack = `${text} ${title} ${url}`.toLowerCase();
-  
-  // DEBUG: Log what's being detected
-  const keywords = ["captcha", "unusual activity", "human verification", "déjanos comprobar que eres una persona", "dejamos comprobar que eres una persona", "let us check you're human", "prove you're human", "verifica que eres una persona"];
-  for (const kw of keywords) {
-    if (haystack.includes(kw)) {
-      console.log(`[DEBUG] detectSecurityChallenge: Found keyword "${kw}" in text`);
-      return true;
-    }
-  }
+  // DISABLED - causing false positives on normal login pages
   return false;
 }
 
