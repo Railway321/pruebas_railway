@@ -274,6 +274,7 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         }
 
         if (existingSession.result === "security_block") {
+          console.log("[SCRAPER] Security block detected, taking screenshot...");
           await saveScreenshot(session.page, companyId, "security-block");
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
