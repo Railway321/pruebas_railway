@@ -437,7 +437,13 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
     console.log(`[SCRAPER] Existing session check: ${existingSession.result}`);
 
     if (existingSession.result === "security_block") {
-      await saveScreenshot(session.page, companyId, "security-block");
+      console.log("[DEBUG] security_block detected in scrapeBookingReviews, taking screenshot...");
+      try {
+        await saveScreenshot(session.page, companyId, "security-block");
+        console.log("[DEBUG] Screenshot saved in scrapeBookingReviews!");
+      } catch (e: any) {
+        console.log("[DEBUG] Screenshot failed in scrapeBookingReviews:", e?.message);
+      }
       throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
     }
 
