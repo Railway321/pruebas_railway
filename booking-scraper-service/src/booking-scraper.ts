@@ -559,8 +559,17 @@ function detectTwoFactor(bodyText: string): boolean {
 }
 
 function detectSecurityChallenge(text: string, title = "", url = ""): boolean {
-  // DISABLED - causing false positives on normal login pages
-  return false;
+  const haystack = `${text} ${title} ${url}`.toLowerCase();
+  return (
+    haystack.includes("captcha") ||
+    haystack.includes("unusual activity") ||
+    haystack.includes("human verification") ||
+    haystack.includes("déjanos comprobar que eres una persona") ||
+    haystack.includes("dejanos comprobar que eres una persona") ||
+    haystack.includes("let us check you're human") ||
+    haystack.includes("prove you're human") ||
+    haystack.includes("verifica que eres una persona")
+  );
 }
 
 function detectEmailOtp(bodyText: string, url: string): boolean {
@@ -593,6 +602,15 @@ async function getFirstVisibleLocator(page: Page, selector: string): Promise<Ret
     if (await item.isVisible().catch(() => false)) return item;
   }
   return null;
+}
+
+async function waitForVisibleSelector(page: Page, selector: string, timeoutMs = 8000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await hasVisibleSelector(page, selector)) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
 }
 
 async function logVisibleInputs(page: Page, context: string): Promise<void> {
@@ -1455,6 +1473,12 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       `[SCRAPER] Username submit resolved to ${progressState.state} | ${progressState.url}`
     );
     await logDetailedPageState(page, "AFTER_USERNAME_SUBMIT");
+
+    if (progressState.state === "login_username") {
+      console.log("[SCRAPER] Still on username step; waiting for password field...");
+      await waitForVisibleSelector(page, passwordSelector, 10000);
+      await logDetailedPageState(page, "AFTER_USERNAME_WAIT_PASSWORD");
+    }
     
     try {
       await saveScreenshot(page, companyId, "02-after-username-submit");
@@ -1550,7 +1574,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   }
 
   const postPasswordBody = ((await page.textContent("body")) || "").toLowerCase();
-  if (detectSecurityChallenge(postPasswordBody, await page.title().catch(() => ""), page.url())) {
+  const stillHasLogin = await hasLoginFields(page);
+  if (!stillHasLogin && detectSecurityChallenge(postPasswordBody, await page.title().catch(() => ""), page.url())) {
     await saveDebugScreenshot(page, "booking-login-security-check");
     try {
       await saveScreenshot(page, companyId, "07-security-check-after-password");
