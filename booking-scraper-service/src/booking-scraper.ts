@@ -560,16 +560,16 @@ function detectTwoFactor(bodyText: string): boolean {
 
 function detectSecurityChallenge(text: string, title = "", url = ""): boolean {
   const haystack = `${text} ${title} ${url}`.toLowerCase();
-  return (
-    haystack.includes("captcha") ||
-    haystack.includes("unusual activity") ||
-    haystack.includes("human verification") ||
-    haystack.includes("déjanos comprobar que eres una persona") ||
-    haystack.includes("dejanos comprobar que eres una persona") ||
-    haystack.includes("let us check you're human") ||
-    haystack.includes("prove you're human") ||
-    haystack.includes("verifica que eres una persona")
-  );
+  
+  // DEBUG: Log what's being detected
+  const keywords = ["captcha", "unusual activity", "human verification", "déjanos comprobar que eres una persona", "dejamos comprobar que eres una persona", "let us check you're human", "prove you're human", "verifica que eres una persona"];
+  for (const kw of keywords) {
+    if (haystack.includes(kw)) {
+      console.log(`[DEBUG] detectSecurityChallenge: Found keyword "${kw}" in text`);
+      return true;
+    }
+  }
+  return false;
 }
 
 function detectEmailOtp(bodyText: string, url: string): boolean {
