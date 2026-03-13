@@ -210,6 +210,14 @@ export type AuthStatus =
   | "security_block"
   | "unknown";
 
+type BookingAuthState =
+  | "two_factor"
+  | "two_factor_email"
+  | "login_username"
+  | "login_password"
+  | "login_full"
+  | "unknown";
+
 export type TwoFactorStatus = "ok" | "invalid_code" | "still_required";
 
 export async function scrapeBookingReviews(companyId: string): Promise<ScrapeResult> {
@@ -870,14 +878,54 @@ async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): 
   return false;
 }
 
+async function submitLoginStep(
+  page: Page,
+  input: ReturnType<Page["locator"]>,
+  submitLocators: Array<ReturnType<Page["locator"]>>,
+  label: string,
+  successStates: Array<BookingAuthState>
+): Promise<{
+  state: BookingAuthState;
+  url: string;
+  title: string;
+}> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await input.focus().catch(() => undefined);
+    const clicked = await clickFirstVisible(submitLocators);
+    if (!clicked) {
+      await input.press("Enter").catch(() => undefined);
+      await page.keyboard.press("Enter").catch(() => undefined);
+    }
+
+    await humanDelay(page, 1200, 2200);
+    const state = await describeAuthState(page);
+    console.log(
+      `[SCRAPER] ${label} submit attempt ${attempt + 1}/3 | state=${state.state} | title=${state.title} | url=${state.url}`
+    );
+    if (successStates.includes(state.state)) {
+      return state;
+    }
+
+    await page
+      .locator('form button[type="submit"], form input[type="submit"]')
+      .first()
+      .click()
+      .catch(() => undefined);
+    await humanDelay(page, 1200, 2200);
+    const fallbackState = await describeAuthState(page);
+    console.log(
+      `[SCRAPER] ${label} fallback submit ${attempt + 1}/3 | state=${fallbackState.state} | title=${fallbackState.title} | url=${fallbackState.url}`
+    );
+    if (successStates.includes(fallbackState.state)) {
+      return fallbackState;
+    }
+  }
+
+  return describeAuthState(page);
+}
+
 async function waitForAuthProgress(page: Page, label: string): Promise<{
-  state:
-    | "two_factor"
-    | "two_factor_email"
-    | "login_username"
-    | "login_password"
-    | "login_full"
-    | "unknown";
+  state: BookingAuthState;
   url: string;
   title: string;
 }> {
@@ -965,6 +1013,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     page.getByRole("button", { name: /iniciar sesión/i }),
     page.getByRole("button", { name: /sign in/i }),
     page.locator('button[type="submit"]'),
+    page.locator('input[type="submit"]'),
     page.locator('button[data-ga-label="login-button"]'),
   ];
 
@@ -984,12 +1033,13 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     await usernameInput.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
     await logInputValueLengths(page, "after username fill");
     await humanDelay(page);
-    const clicked = await clickFirstVisible(submitLocators);
-    if (!clicked) {
-      await page.keyboard.press("Enter").catch(() => undefined);
-    }
-    await humanDelay(page, 1500, 2500);
-    const progressState = await waitForAuthProgress(page, "After username submit");
+    const progressState = await submitLoginStep(page, usernameInput, submitLocators, "After username", [
+      "login_password",
+      "login_full",
+      "two_factor",
+      "two_factor_email",
+      "unknown",
+    ]);
     console.log(
       `[SCRAPER] Username submit resolved to ${progressState.state} | ${progressState.url}`
     );
@@ -1031,12 +1081,13 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await logInputValueLengths(page, "after password fill");
   await humanDelay(page);
-  const clicked = await clickFirstVisible(submitLocators);
-  if (!clicked) {
-    await page.keyboard.press("Enter").catch(() => undefined);
-  }
+  await submitLoginStep(page, passwordInputAfter, submitLocators, "After password", [
+    "two_factor",
+    "two_factor_email",
+    "unknown",
+  ]);
 
-  await humanDelay(page, 5000, 8000);
+  await humanDelay(page, 3500, 5500);
   await randomScroll(page);
 
   if (await looksLikeTwoFactor(page)) {
