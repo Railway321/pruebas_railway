@@ -93,18 +93,34 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 app.get("/debug/last-2fa-screenshot", requireApiKey, async (_req, res) => {
-  if (!lastTwoFactorScreenshotPath) {
-    return res.status(404).json({
-      success: false,
-      error: "No hay captura 2FA disponible",
-    });
-  }
-
   try {
-    const data = await fs.readFile(lastTwoFactorScreenshotPath);
+    let screenshotPath: string | null = lastTwoFactorScreenshotPath;
+    if (!screenshotPath) {
+      const candidates = [
+        "/tmp/booking-post-otp-2fa-last.txt",
+        "/tmp/booking-post-otp-state-last.txt",
+        "/tmp/booking-before-export-last.txt",
+        "/tmp/booking-reviews-missing-export-last.txt",
+        "/tmp/booking-2fa-last.txt",
+      ];
+      for (const candidate of candidates) {
+        const resolved = (await fs.readFile(candidate, "utf8").catch(() => "")).trim();
+        if (resolved) {
+          screenshotPath = resolved;
+          break;
+        }
+      }
+    }
+    if (!screenshotPath) {
+      return res.status(404).json({
+        success: false,
+        error: "No hay captura 2FA disponible",
+      });
+    }
+    const data = await fs.readFile(screenshotPath);
     res.json({
       success: true,
-      path: lastTwoFactorScreenshotPath,
+      path: screenshotPath,
       contentType: "image/png",
       base64: data.toString("base64"),
     });
@@ -479,8 +495,28 @@ app.post(
           entry.session,
           String(code)
         );
-        if (status !== "ok") {
+        if (status === "invalid_code") {
           return { type: "invalid", status } as const;
+        }
+
+        const authStatus = await ensureBookingAuthenticated(entry.session);
+        if (typeof authStatus === "object" && authStatus.status === "2fa_required") {
+          const authState = await logAuthState(entry.session.page, "2FA required after verify-2fa");
+          entry.expiresAt = Date.now() + SESSION_TTL_MS;
+          entry.selectedMethod = undefined;
+          entry.twoFactorType = authStatus.twoFactorType;
+          return {
+            type: "two_factor",
+            sessionId,
+            expiresAt: entry.expiresAt,
+            phoneOptions: authStatus.phoneOptions || [],
+            twoFactorType: authStatus.twoFactorType,
+            authState,
+          } as const;
+        }
+
+        if (authStatus !== "ok") {
+          return { type: "auth_error", status: authStatus } as const;
         }
 
         const scrapeResult = await scrapeReviewsWithSession(entry.session);
@@ -497,6 +533,28 @@ app.post(
           error: "Codigo 2FA inválido",
           retriable: true,
         });
+      }
+
+      if (result.type === "two_factor") {
+        return res.status(202).json({
+          success: false,
+          requiresTwoFactor: true,
+          sessionId: result.sessionId,
+          expiresAt: result.expiresAt,
+          phoneOptions: result.phoneOptions,
+          twoFactorType: result.twoFactorType,
+          authState: result.authState,
+        });
+      }
+
+      if (result.type === "auth_error") {
+        const message =
+          result.status === "invalid_credentials"
+            ? "BOOKING_AUTH_INVALID_CREDENTIALS"
+            : result.status === "security_block"
+            ? "BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA"
+            : "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR";
+        throw new Error(message);
       }
 
       res.json({ success: true, data: result.data });

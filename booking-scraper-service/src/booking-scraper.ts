@@ -119,6 +119,19 @@ async function humanDelay(page: any, minMs = 3000, maxMs = 6000) {
   await page.waitForTimeout(delay);
 }
 
+async function saveDebugScreenshot(page: Page, prefix: string): Promise<string | null> {
+  try {
+    const screenshotPath = `/tmp/${prefix}-${Date.now()}.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await fs.writeFile(`/tmp/${prefix}-last.txt`, screenshotPath, "utf8").catch(() => undefined);
+    console.log(`[SCRAPER] Saved debug screenshot (${prefix}): ${screenshotPath}`);
+    return screenshotPath;
+  } catch (error) {
+    console.log(`[SCRAPER] Failed to save debug screenshot (${prefix})`, error);
+    return null;
+  }
+}
+
 export interface ScrapeResult {
   reviews: InsertReview[];
   errors: string[];
@@ -829,61 +842,6 @@ async function waitForAuthProgress(page: Page, label: string): Promise<{
   return describeAuthState(page);
 }
 
-async function completeLoginAfterOtp(page: Page): Promise<void> {
-  const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
-  const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
-  const loginEmail = process.env.BOOKING_EXTRANET_EMAIL;
-  const usernameSelector = 'input[name="username"], input[type="email"], input[name="identifier"], input[id*="username"], input[id*="email"]';
-  const passwordSelector = 'input[type="password"], input[name*="password"], input[id*="password"]';
-  const submitLocators = [
-    page.getByRole("button", { name: /siguiente/i }),
-    page.getByRole("button", { name: /next/i }),
-    page.getByRole("button", { name: /continuar/i }),
-    page.getByRole("button", { name: /continue/i }),
-    page.getByRole("button", { name: /iniciar sesión/i }),
-    page.getByRole("button", { name: /sign in/i }),
-    page.locator('button[type="submit"]'),
-    page.locator('button[data-ga-label="login-button"]'),
-  ];
-
-  let state = await describeAuthState(page);
-  console.log(
-    `[SCRAPER] Completing login after OTP from state=${state.state} | ${state.title} | ${state.url}`
-  );
-
-  if (state.state === "login_username" || state.state === "login_full") {
-    const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
-    const usernameInput = page.locator(usernameSelector).first();
-    await usernameInput.fill("").catch(() => undefined);
-    await usernameInput.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
-    await logInputValueLengths(page, "after otp username fill");
-  }
-
-  if (state.state === "login_password" || state.state === "login_full") {
-    const passwordInput = page.locator(passwordSelector).first();
-    await passwordInput.fill("").catch(() => undefined);
-    await passwordInput.type(password, { delay: Math.random() * 80 + 30 });
-    await logInputValueLengths(page, "after otp password fill");
-  }
-
-  if (
-    state.state === "login_username" ||
-    state.state === "login_password" ||
-    state.state === "login_full"
-  ) {
-    await humanDelay(page, 1500, 2500);
-    const clicked = await clickFirstVisible(submitLocators);
-    if (!clicked) {
-      await page.keyboard.press("Enter").catch(() => undefined);
-    }
-    await humanDelay(page, 3000, 5000);
-    state = await waitForAuthProgress(page, "After OTP login continuation");
-    console.log(
-      `[SCRAPER] OTP login continuation resolved to ${state.state} | ${state.url}`
-    );
-  }
-}
-
 export async function ensureBookingAuthenticated(session: BookingSession): Promise<AuthStatus> {
   const username = getEnvOrThrow("BOOKING_EXTRANET_USERNAME");
   const password = getEnvOrThrow("BOOKING_EXTRANET_PASSWORD");
@@ -1103,6 +1061,7 @@ export async function submitTwoFactorCode(
 
   if (await looksLikeTwoFactor(page)) {
     const bodyText = ((await page.textContent("body")) || "").toLowerCase();
+    await saveDebugScreenshot(page, "booking-post-otp-2fa");
     if (
       bodyText.includes("incorrect") ||
       bodyText.includes("código incorrecto") ||
@@ -1118,38 +1077,7 @@ export async function submitTwoFactorCode(
   console.log(
     `[SCRAPER] Auth state after 2FA code submit: ${stateAfterCode.state} | ${stateAfterCode.title} | ${stateAfterCode.url}`
   );
-
-  const baseUrl = getEnvOrThrow("BOOKING_EXTRANET_URL");
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
-  await humanDelay(page, 2000, 4000);
-
-  const stateAfterBaseLoad = await describeAuthState(page);
-  console.log(
-    `[SCRAPER] Auth state after returning to extranet: ${stateAfterBaseLoad.state} | ${stateAfterBaseLoad.title} | ${stateAfterBaseLoad.url}`
-  );
-
-  if (
-    stateAfterBaseLoad.state === "login_username" ||
-    stateAfterBaseLoad.state === "login_password" ||
-    stateAfterBaseLoad.state === "login_full"
-  ) {
-    await completeLoginAfterOtp(page);
-  }
-
-  const finalStateAfterOtp = await describeAuthState(page);
-  console.log(
-    `[SCRAPER] Final auth state after OTP flow: ${finalStateAfterOtp.state} | ${finalStateAfterOtp.title} | ${finalStateAfterOtp.url}`
-  );
-
-  if (
-    finalStateAfterOtp.state === "login_username" ||
-    finalStateAfterOtp.state === "login_password" ||
-    finalStateAfterOtp.state === "login_full" ||
-    finalStateAfterOtp.state === "two_factor" ||
-    finalStateAfterOtp.state === "two_factor_email"
-  ) {
-    return "still_required";
-  }
+  await saveDebugScreenshot(page, "booking-post-otp-state");
 
   return "ok";
 }
@@ -1206,6 +1134,7 @@ export async function scrapeReviewsWithSession(
   console.log(
     `[SCRAPER] Auth state before export lookup: ${reviewAuthState.state} | ${reviewAuthState.title} | ${reviewAuthState.url}`
   );
+  await saveDebugScreenshot(page, "booking-before-export");
 
   const exportCandidates = [
     page.getByRole("button", { name: /exportar|export/i }),
@@ -1236,9 +1165,7 @@ export async function scrapeReviewsWithSession(
   }
 
   if (!exportButton) {
-    const missingExportPath = `/tmp/booking-reviews-missing-export-${Date.now()}.png`;
-    await page.screenshot({ path: missingExportPath, fullPage: true }).catch(() => undefined);
-    console.log(`[SCRAPER] Saved missing export screenshot: ${missingExportPath}`);
+    await saveDebugScreenshot(page, "booking-reviews-missing-export");
     throw new Error("Botón de exportación de reseñas no encontrado en Booking");
   }
 
