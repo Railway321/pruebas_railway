@@ -317,11 +317,14 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         }
 
         if (existingSession.result === "login_required") {
-          console.log("[DEBUG] login_required detected, taking screenshot...");
-          await saveScreenshot(session.page, companyId, "login-required");
-          await session.context.close().catch(() => undefined);
-          await session.browser.close().catch(() => undefined);
-          throw new Error("BOOKING_SESSION_EXPIRED");
+          console.log("[DEBUG] login_required detected; continuing with automated login");
+          if (!session.page.isClosed()) {
+            try {
+              await saveScreenshot(session.page, companyId, "login-required");
+            } catch (screenshotError: any) {
+              console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
+            }
+          }
         }
 
         if (existingSession.result === "two_factor_required") {
