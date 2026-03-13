@@ -1489,6 +1489,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     );
     await logDetailedPageState(page, "AFTER_USERNAME_SUBMIT");
 
+    const afterUsernameBody = ((await page.textContent("body")) || "").toLowerCase();
+    if (detectSecurityChallenge(afterUsernameBody, await page.title().catch(() => ""), page.url())) {
+      await saveDebugScreenshot(page, "booking-login-security-check");
+      try {
+        await saveScreenshot(page, companyId, "03-security-check-detected");
+      } catch (e) {}
+      return "security_block";
+    }
+
     if (progressState.state === "login_username") {
       console.log("[SCRAPER] Still on username step; waiting for password field...");
       const beforeUrl = page.url();
@@ -1530,7 +1539,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       console.log("[DEBUG] Failed to save screenshot before password:", e?.message);
     }
     
-    if (state.state === "security_check") {
+    const prePasswordBody = ((await page.textContent("body")) || "").toLowerCase();
+    if (detectSecurityChallenge(prePasswordBody, await page.title().catch(() => ""), page.url())) {
       await saveDebugScreenshot(page, "booking-login-security-check");
       try {
         await saveScreenshot(page, companyId, "05-security-check-before-password");
