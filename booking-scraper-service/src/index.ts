@@ -152,6 +152,21 @@ function cleanupExpiredSessions() {
   }
 }
 
+function isCrashError(error: unknown): boolean {
+  const message = String((error as any)?.message || error || "").toLowerCase();
+  return message.includes("page crashed") || message.includes("target crashed");
+}
+
+async function ensureSessionPage(session: BookingSession): Promise<void> {
+  if (!session.page || session.page.isClosed()) {
+    if (!session.context || (session.context as any).isClosed?.()) {
+      throw new Error("SESSION_CRASHED");
+    }
+    const newPage = await session.context.newPage();
+    (session as any).page = newPage;
+  }
+}
+
 setInterval(cleanupExpiredSessions, 60 * 1000).unref();
 
 app.get("/health", (_req: Request, res: Response) => {
@@ -674,8 +689,21 @@ app.post("/login/:sessionId/finish", requireApiKey, async (req, res) => {
     return res.status(410).json({ success: false, error: "Sesion de login expirada" });
   }
   try {
-    const authState = await checkExistingBookingSession(entry.session);
-    if (authState.result !== "ok") {
+    await ensureSessionPage(entry.session);
+
+    let authState: Awaited<ReturnType<typeof checkExistingBookingSession>> | null = null;
+    try {
+      authState = await checkExistingBookingSession(entry.session);
+    } catch (error) {
+      if (isCrashError(error)) {
+        await ensureSessionPage(entry.session);
+        authState = await checkExistingBookingSession(entry.session);
+      } else {
+        throw error;
+      }
+    }
+
+    if (!authState || authState.result !== "ok") {
       return res.status(409).json({
         success: false,
         error: "LOGIN_NOT_COMPLETE",
@@ -689,7 +717,8 @@ app.post("/login/:sessionId/finish", requireApiKey, async (req, res) => {
     loginSessions.delete(sessionId);
     res.json({ success: true, data: result });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error?.message || "No se pudo finalizar el login" });
+    const message = error?.message || "No se pudo finalizar el login";
+    res.status(500).json({ success: false, error: message });
   }
 });
 
@@ -743,13 +772,6 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         }
 
         console.log("[DEBUG] Login requerido; habilitando login remoto manual");
-        if (!session.page.isClosed()) {
-          try {
-            await saveScreenshot(session.page, companyId, "login-remote-start");
-          } catch (screenshotError: any) {
-            console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
-          }
-        }
         const loginSession = registerLoginSession(session);
         return {
           type: "login_remote",

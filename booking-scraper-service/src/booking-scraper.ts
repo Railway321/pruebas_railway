@@ -437,13 +437,6 @@ export async function scrapeBookingReviews(companyId: string): Promise<ScrapeRes
     console.log(`[SCRAPER] Existing session check: ${existingSession.result}`);
 
     if (existingSession.result === "security_block") {
-      console.log("[DEBUG] security_block detected in scrapeBookingReviews, taking screenshot...");
-      try {
-        await saveScreenshot(session.page, companyId, "security-block");
-        console.log("[DEBUG] Screenshot saved in scrapeBookingReviews!");
-      } catch (e: any) {
-        console.log("[DEBUG] Screenshot failed in scrapeBookingReviews:", e?.message);
-      }
       throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
     }
 
@@ -1206,13 +1199,6 @@ export async function checkExistingBookingSession(
 
   console.log("[DEBUG] After navigation, page.isClosed():", session.page.isClosed());
   
-  try {
-    await saveScreenshot(page, companyId, "01-after-navigate");
-    console.log("[DEBUG] Screenshot saved after navigation");
-  } catch (e: any) {
-    console.log("[DEBUG] Failed to save screenshot after navigation:", e?.message);
-  }
-
   const state = await describeAuthState(page);
   console.log("[DEBUG] describeAuthState result:", state.state, "| url:", state.url);
 
@@ -1389,13 +1375,6 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await humanDelay(page);
   await randomScroll(page);
   
-  try {
-    await saveScreenshot(page, companyId, "00-initial-load");
-    console.log("[DEBUG] Screenshot saved at initial load");
-  } catch (e: any) {
-    console.log("[DEBUG] Failed to save initial screenshot:", e?.message);
-  }
-
   console.log(`[SCRAPER] Current URL after base load: ${page.url()}`);
 
   if (isBookingSsoUrl(page.url())) {
@@ -1459,22 +1438,11 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await logVisibleInputs(page, "after login load");
   await logDetailedPageState(page, "LOGIN_PAGE_LOADED");
   
-  try {
-    await saveScreenshot(page, companyId, "01-login-page-loaded");
-    console.log("[DEBUG] Screenshot saved at login page loaded");
-  } catch (e: any) {
-    console.log("[DEBUG] Failed to save login page screenshot:", e?.message);
-  }
-
   const hasUsernameVisible = await hasVisibleSelector(page, usernameSelector);
   const hasPasswordVisible = await hasVisibleSelector(page, passwordSelector);
 
   if (hasUsernameVisible && !hasPasswordVisible) {
     await logDetailedPageState(page, "BEFORE_USERNAME_SUBMIT");
-    try {
-      await saveScreenshot(page, companyId, "02a-before-username-submit");
-    } catch (e: any) {}
-    
     const usernameInput = (await getFirstVisibleLocator(page, usernameSelector)) || page.locator(usernameSelector).first();
     const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     await usernameInput.fill("").catch(() => undefined);
@@ -1496,10 +1464,6 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
     const afterUsernameBody = ((await page.textContent("body")) || "").toLowerCase();
     if (detectSecurityChallenge(afterUsernameBody, await page.title().catch(() => ""), page.url())) {
-      await saveDebugScreenshot(page, "booking-login-security-check");
-      try {
-        await saveScreenshot(page, companyId, "03-security-check-detected");
-      } catch (e) {}
       return "security_block";
     }
 
@@ -1510,18 +1474,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
       await logDetailedPageState(page, "AFTER_USERNAME_WAIT_PASSWORD");
     }
     
-    try {
-      await saveScreenshot(page, companyId, "02-after-username-submit");
-      console.log("[DEBUG] Screenshot saved after username submit");
-    } catch (e: any) {
-      console.log("[DEBUG] Failed to save screenshot after username submit:", e?.message);
-    }
-    
     if (progressState.state === "security_check") {
-      await saveDebugScreenshot(page, "booking-login-security-check");
-      try {
-        await saveScreenshot(page, companyId, "03-security-check-detected");
-      } catch (e) {}
       return "security_block";
     }
   }
@@ -1536,20 +1489,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     );
     await logVisibleInputs(page, "before password entry");
     await logDetailedPageState(page, "BEFORE_PASSWORD_ENTRY");
-    
-    try {
-      await saveScreenshot(page, companyId, "04-before-password-entry");
-      console.log("[DEBUG] Screenshot saved before password entry");
-    } catch (e: any) {
-      console.log("[DEBUG] Failed to save screenshot before password:", e?.message);
-    }
-    
     const prePasswordBody = ((await page.textContent("body")) || "").toLowerCase();
     if (detectSecurityChallenge(prePasswordBody, await page.title().catch(() => ""), page.url())) {
-      await saveDebugScreenshot(page, "booking-login-security-check");
-      try {
-        await saveScreenshot(page, companyId, "05-security-check-before-password");
-      } catch (e) {}
       return "security_block";
     }
     if (state.state === "two_factor") {
@@ -1579,11 +1520,6 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await logInputValueLengths(page, "after password fill");
   await logDetailedPageState(page, "BEFORE_PASSWORD_SUBMIT");
-  
-  try {
-    await saveScreenshot(page, companyId, "05a-before-password-submit");
-  } catch (e: any) {}
-  
   await humanDelay(page);
   await submitLoginStep(page, passwordInputAfter, submitLocators, "After password", [
     "security_check",
@@ -1596,21 +1532,10 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   await randomScroll(page);
 
   await logDetailedPageState(page, "AFTER_PASSWORD_SUBMIT");
-  
-  try {
-    await saveScreenshot(page, companyId, "06-after-password-submit");
-    console.log("[DEBUG] Screenshot saved after password submit");
-  } catch (e: any) {
-    console.log("[DEBUG] Failed to save screenshot after password:", e?.message);
-  }
 
   const postPasswordBody = ((await page.textContent("body")) || "").toLowerCase();
   const stillHasLogin = await hasLoginFields(page);
   if (!stillHasLogin && detectSecurityChallenge(postPasswordBody, await page.title().catch(() => ""), page.url())) {
-    await saveDebugScreenshot(page, "booking-login-security-check");
-    try {
-      await saveScreenshot(page, companyId, "07-security-check-after-password");
-    } catch (e) {}
     return "security_block";
   }
 
@@ -1712,7 +1637,6 @@ export async function submitTwoFactorCode(
 
   if (await looksLikeTwoFactor(page)) {
     const bodyText = ((await page.textContent("body")) || "").toLowerCase();
-    await saveDebugScreenshot(page, "booking-post-otp-2fa");
     if (
       bodyText.includes("incorrect") ||
       bodyText.includes("código incorrecto") ||
@@ -1728,7 +1652,6 @@ export async function submitTwoFactorCode(
   console.log(
     `[SCRAPER] Auth state after 2FA code submit: ${stateAfterCode.state} | ${stateAfterCode.title} | ${stateAfterCode.url}`
   );
-  await saveDebugScreenshot(page, "booking-post-otp-state");
 
   return "ok";
 }
@@ -1797,8 +1720,6 @@ export async function scrapeReviewsWithSession(
     throw new Error("BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS");
   }
 
-  await saveDebugScreenshot(page, "booking-before-export");
-
   const exportCandidates = [
     page.getByRole("button", { name: /exportar|export/i }),
     page.getByRole("button", { name: /descargar comentarios de los clientes/i }),
@@ -1828,7 +1749,6 @@ export async function scrapeReviewsWithSession(
   }
 
   if (!exportButton) {
-    await saveDebugScreenshot(page, "booking-reviews-missing-export");
     throw new Error("Botón de exportación de reseñas no encontrado en Booking");
   }
 
