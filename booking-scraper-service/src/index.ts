@@ -44,8 +44,18 @@ const twoFactorSessions = new Map<
     twoFactorType?: "phone" | "email";
   }
 >();
+const captchaSessions = new Map<
+  string,
+  {
+    session: BookingSession;
+    expiresAt: number;
+    status: "waiting_captcha";
+    companyId: string;
+  }
+>();
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
+const CAPTCHA_TTL_MS = 10 * 60 * 1000;
 let lastTwoFactorScreenshotPath: string | null = null;
 let lastLoginScreenshotPath: string | null = null;
 
@@ -59,6 +69,18 @@ async function logAuthState(page: BookingSession["page"], contextLabel: string) 
 
 function mapStateToTwoFactorType(state: string): "phone" | "email" {
   return state === "two_factor_email" ? "email" : "phone";
+}
+
+function registerCaptchaSession(session: BookingSession) {
+  const sessionId = randomUUID();
+  const expiresAt = Date.now() + CAPTCHA_TTL_MS;
+  captchaSessions.set(sessionId, {
+    session,
+    expiresAt,
+    status: "waiting_captcha",
+    companyId: session.companyId,
+  });
+  return { sessionId, expiresAt };
 }
 
 function requireApiKey(req: Request, res: Response, next: NextFunction) {
@@ -92,6 +114,12 @@ function cleanupExpiredSessions() {
     if (entry.expiresAt <= now) {
       entry.session.browser.close().catch(() => undefined);
       twoFactorSessions.delete(sessionId);
+    }
+  }
+  for (const [sessionId, entry] of captchaSessions.entries()) {
+    if (entry.expiresAt <= now) {
+      entry.session.browser.close().catch(() => undefined);
+      captchaSessions.delete(sessionId);
     }
   }
 }
@@ -251,6 +279,147 @@ app.get("/debug/last-login-screenshot", requireApiKey, async (_req, res) => {
   }
 });
 
+app.get("/captcha/:sessionId/status", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const entry = captchaSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Captcha session no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    captchaSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Captcha session expirada" });
+  }
+  const page = entry.session.page;
+  res.json({
+    success: true,
+    url: page.url(),
+    title: await page.title().catch(() => ""),
+    expiresAt: entry.expiresAt,
+  });
+});
+
+app.get("/captcha/:sessionId/screenshot", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const entry = captchaSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Captcha session no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    captchaSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Captcha session expirada" });
+  }
+  try {
+    const filePath = `/tmp/captcha-${sessionId}-${Date.now()}.png`;
+    await entry.session.page.screenshot({ path: filePath, fullPage: true });
+    const data = await fs.readFile(filePath);
+    res.json({ success: true, contentType: "image/png", base64: data.toString("base64") });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo capturar" });
+  }
+});
+
+app.post("/captcha/:sessionId/click", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { x, y } = req.body || {};
+  const entry = captchaSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Captcha session no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    captchaSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Captcha session expirada" });
+  }
+  if (typeof x !== "number" || typeof y !== "number") {
+    return res.status(400).json({ success: false, error: "x e y son requeridos" });
+  }
+  try {
+    await entry.session.page.mouse.click(x, y);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo hacer click" });
+  }
+});
+
+app.post("/captcha/:sessionId/type", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { text } = req.body || {};
+  const entry = captchaSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Captcha session no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    captchaSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Captcha session expirada" });
+  }
+  if (!text) {
+    return res.status(400).json({ success: false, error: "text es requerido" });
+  }
+  try {
+    await entry.session.page.keyboard.type(String(text), { delay: 20 });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo escribir" });
+  }
+});
+
+app.post("/captcha/:sessionId/finish", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const entry = captchaSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Captcha session no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    captchaSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Captcha session expirada" });
+  }
+  const session = entry.session;
+  const companyId = entry.companyId;
+  captchaSessions.delete(sessionId);
+  try {
+    const authStatus = await ensureBookingAuthenticated(session);
+    const isTwoFactor = typeof authStatus === "object" && authStatus.status === "2fa_required";
+    if (isTwoFactor) {
+      const authState = await logAuthState(session.page, "2FA session created after captcha");
+      const newSessionId = randomUUID();
+      const expiresAt = Date.now() + SESSION_TTL_MS;
+      const twoFactorType = authStatus.twoFactorType || mapStateToTwoFactorType(authState.state);
+      twoFactorSessions.set(newSessionId, {
+        session,
+        expiresAt,
+        status: "waiting_2fa",
+        twoFactorType,
+      });
+      return res.status(202).json({
+        success: false,
+        requiresTwoFactor: true,
+        sessionId: newSessionId,
+        expiresAt,
+        phoneOptions: authStatus.phoneOptions || [],
+        twoFactorType,
+        authState,
+      });
+    }
+    if (authStatus !== "ok") {
+      await session.context.close().catch(() => undefined);
+      await session.browser.close().catch(() => undefined);
+      return res.status(409).json({ success: false, error: "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR" });
+    }
+    const scrapeResult = await scrapeReviewsWithSession(session);
+    await savePersistedSession(session.context, companyId, "storageState");
+    await session.context.close().catch(() => undefined);
+    await session.browser.close().catch(() => undefined);
+    res.json({ success: true, data: scrapeResult });
+  } catch (error: any) {
+    console.error("[SCRAPER] Error en /captcha/finish:", error);
+    res.status(500).json({ success: false, error: error?.message || "Error al finalizar captcha" });
+  }
+});
+
 app.get("/debug/screenshots", requireApiKey, async (_req, res) => {
   try {
     const cookieDir = process.env.BOOKING_COOKIES_DIR || path.join(process.cwd(), "cookies");
@@ -301,19 +470,20 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         }
 
         if (existingSession.result === "security_block") {
-          console.log("[DEBUG] security_block detected");
-          console.log("[DEBUG] page.isClosed():", session.page.isClosed());
-          console.log("[DEBUG] browser.isConnected():", session.browser.isConnected());
-          console.log("[SCRAPER] Security block detected, taking screenshot...");
-          try {
-            await saveScreenshot(session.page, companyId, "security-block");
-            console.log("[DEBUG] Screenshot saved successfully!");
-          } catch (screenshotError: any) {
-            console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
+          console.log("[DEBUG] security_block detected; entering captcha mode");
+          if (!session.page.isClosed()) {
+            try {
+              await saveScreenshot(session.page, companyId, "security-block");
+            } catch (screenshotError: any) {
+              console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
+            }
           }
-          await session.context.close().catch(() => undefined);
-          await session.browser.close().catch(() => undefined);
-          throw new Error("BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA");
+          const captchaSession = registerCaptchaSession(session);
+          return {
+            type: "captcha",
+            sessionId: captchaSession.sessionId,
+            expiresAt: captchaSession.expiresAt,
+          } as const;
         }
 
         if (existingSession.result === "login_required") {
@@ -361,6 +531,15 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
           } as const;
         }
 
+        if (authStatus === "security_block") {
+          const captchaSession = registerCaptchaSession(session);
+          return {
+            type: "captcha",
+            sessionId: captchaSession.sessionId,
+            expiresAt: captchaSession.expiresAt,
+          } as const;
+        }
+
         if (authStatus !== "ok") {
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
@@ -373,7 +552,13 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
         await session.browser.close().catch(() => undefined);
         return { type: "result", data: scrapeResult } as const;
       } catch (error) {
-        if (!twoFactorSessions || !Array.from(twoFactorSessions.values()).some((entry) => entry.session === session)) {
+        if (
+          !twoFactorSessions ||
+          !Array.from(twoFactorSessions.values()).some((entry) => entry.session === session)
+        ) {
+          if (Array.from(captchaSessions.values()).some((entry) => entry.session === session)) {
+            throw error;
+          }
           await saveScreenshot(session.page, companyId, "error-fallback").catch(() => undefined);
           await session.context.close().catch(() => undefined);
           await session.browser.close().catch(() => undefined);
@@ -396,12 +581,21 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
       });
     }
 
+    if (result.type === "captcha") {
+      console.log(`[SCRAPER] Captcha required for ${companyId}`);
+      return res.status(202).json({
+        success: false,
+        requiresManualAction: true,
+        manualActionType: "captcha",
+        sessionId: result.sessionId,
+        expiresAt: result.expiresAt,
+      });
+    }
+
     if (result.type === "error") {
       const message =
         result.status === "invalid_credentials"
           ? "BOOKING_AUTH_INVALID_CREDENTIALS"
-          : result.status === "security_block"
-          ? "BOOKING_AUTH_SECURITY_BLOCK_OR_CAPTCHA"
           : result.status === "unknown"
           ? "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR"
           : "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR";
