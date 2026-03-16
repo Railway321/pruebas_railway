@@ -99,9 +99,13 @@ function getStartOfYear(): Date {
   return new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
 }
 
+function stripBom(value: string): string {
+  return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
+}
+
 function decodeCsvBuffer(buffer: Buffer): string {
-  const utf8 = buffer.toString("utf8");
-  const latin1 = buffer.toString("latin1");
+  const utf8 = stripBom(buffer.toString("utf8"));
+  const latin1 = stripBom(buffer.toString("latin1"));
   const score = (value: string) => {
     const badChars = (value.match(/[\uFFFD]/g) || []).length;
     const mojibake = (value.match(/Ã./g) || []).length;
