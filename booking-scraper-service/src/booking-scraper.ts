@@ -364,8 +364,6 @@ const LOGIN_USERNAME_SELECTOR = [
   'input[placeholder*="usuario" i]',
   'input[placeholder*="user id" i]',
   'input[placeholder*="id de usuario" i]',
-  'input[type="email"]',
-  'input[type="text"]',
 ].join(", ");
 
 const LOGIN_PASSWORD_SELECTOR = [
@@ -1306,6 +1304,46 @@ async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): 
   return false;
 }
 
+async function openCommentsMenu(page: Page): Promise<boolean> {
+  const menuCandidates = [
+    page.getByRole("button", { name: /^comentarios$/i }),
+    page.getByRole("button", { name: /comentarios/i }),
+    page.getByRole("link", { name: /^comentarios$/i }),
+    page.getByRole("link", { name: /comentarios/i }),
+  ];
+
+  const menuClicked = await clickFirstVisible(menuCandidates.map((c) => c.first()));
+  if (!menuClicked) return false;
+
+  await page.waitForTimeout(600);
+
+  const optionCandidates = [
+    page.getByRole("menuitem", { name: /comentarios/i }),
+    page.getByRole("link", { name: /comentarios/i }),
+    page.getByRole("button", { name: /comentarios/i }),
+    page.locator("text=/^comentarios$/i"),
+  ];
+
+  return clickFirstVisible(optionCandidates.map((c) => c.first()));
+}
+
+async function navigateToCommentsPage(page: Page, baseUrl: string): Promise<boolean> {
+  try {
+    if (!page.url().includes("/extranet_ng/")) {
+      await page.goto(getBookingHomeUrl(baseUrl), { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(1000);
+    }
+
+    const opened = await openCommentsMenu(page);
+    if (!opened) return false;
+
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function submitLoginStep(
   page: Page,
   input: ReturnType<Page["locator"]>,
@@ -1683,40 +1721,43 @@ export async function scrapeReviewsWithSession(
 
   console.log(`[SCRAPER] Starting review scrape from: ${page.url()}`);
 
-  const reviewsUrl = process.env.BOOKING_REVIEWS_URL;
-  if (reviewsUrl) {
-    await page.goto(reviewsUrl, { waitUntil: "networkidle" });
-  } else {
-    const candidateUrls = [
-      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/reviews.html"),
-      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/review.html"),
-      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/guest_reviews.html"),
-      buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/home.html"),
-      new URL("/reviews", baseUrl).toString(),
-    ];
+  const menuNavigated = await navigateToCommentsPage(page, baseUrl);
+  if (!menuNavigated) {
+    const reviewsUrl = process.env.BOOKING_REVIEWS_URL;
+    if (reviewsUrl) {
+      await page.goto(reviewsUrl, { waitUntil: "networkidle" });
+    } else {
+      const candidateUrls = [
+        buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/reviews.html"),
+        buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/review.html"),
+        buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/guest_reviews.html"),
+        buildBookingUrl(baseUrl, "/hotel/hoteladmin/extranet_ng/manage/home.html"),
+        new URL("/reviews", baseUrl).toString(),
+      ];
 
-    let navigated = false;
-    for (const candidateUrl of candidateUrls) {
-      try {
-        await page.goto(candidateUrl, { waitUntil: "networkidle" });
-        navigated = true;
-        break;
-      } catch {
-        // try next path
+      let navigated = false;
+      for (const candidateUrl of candidateUrls) {
+        try {
+          await page.goto(candidateUrl, { waitUntil: "networkidle" });
+          navigated = true;
+          break;
+        } catch {
+          // try next path
+        }
       }
-    }
 
-    if (!navigated) {
-      const reviewsLink = page.getByRole("link", { name: /comentarios|reviews|opiniones/i });
-      if ((await reviewsLink.count().catch(() => 0)) > 0) {
-        await Promise.all([
-          page.waitForNavigation({ waitUntil: "networkidle" }),
-          reviewsLink.first().click(),
-        ]);
-      } else {
-        throw new Error(
-          "No se pudo navegar a la pagina de comentarios. Configura BOOKING_REVIEWS_URL en Railway."
-        );
+      if (!navigated) {
+        const reviewsLink = page.getByRole("link", { name: /comentarios|reviews|opiniones/i });
+        if ((await reviewsLink.count().catch(() => 0)) > 0) {
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: "networkidle" }),
+            reviewsLink.first().click(),
+          ]);
+        } else {
+          throw new Error(
+            "No se pudo navegar a la pagina de comentarios. Configura BOOKING_REVIEWS_URL en Railway."
+          );
+        }
       }
     }
   }
@@ -1736,7 +1777,21 @@ export async function scrapeReviewsWithSession(
     reviewAuthState.state === "two_factor" ||
     reviewAuthState.state === "two_factor_email"
   ) {
-    throw new Error("BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS");
+    const retried = await navigateToCommentsPage(page, baseUrl);
+    if (retried) {
+      const retryState = await describeAuthState(page);
+      if (
+        retryState.state === "login_username" ||
+        retryState.state === "login_password" ||
+        retryState.state === "login_full" ||
+        retryState.state === "two_factor" ||
+        retryState.state === "two_factor_email"
+      ) {
+        throw new Error("BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS");
+      }
+    } else {
+      throw new Error("BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS");
+    }
   }
 
   const exportCandidates = [
@@ -1756,14 +1811,24 @@ export async function scrapeReviewsWithSession(
   ];
 
   let exportButton = null as null | ReturnType<typeof page.locator>;
-  for (const locator of exportCandidates) {
-    const first = locator.first();
-    const count = await locator.count().catch(() => 0);
-    if (count === 0) continue;
-    const visible = await first.isVisible().catch(() => false);
-    if (visible) {
-      exportButton = first;
-      break;
+  const findExportButton = async () => {
+    for (const locator of exportCandidates) {
+      const first = locator.first();
+      const count = await locator.count().catch(() => 0);
+      if (count === 0) continue;
+      const visible = await first.isVisible().catch(() => false);
+      if (visible) return first;
+    }
+    return null;
+  };
+
+  exportButton = await findExportButton();
+  if (!exportButton) {
+    for (let i = 0; i < 6; i += 1) {
+      await page.mouse.wheel(0, 800);
+      await page.waitForTimeout(600);
+      exportButton = await findExportButton();
+      if (exportButton) break;
     }
   }
 
