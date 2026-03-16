@@ -742,88 +742,21 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
           return { type: "result", data: scrapeResult } as const;
         }
 
-        if (existingSession.result === "security_block") {
-          console.log("[DEBUG] security_block detected; entering captcha mode");
-          if (!session.page.isClosed()) {
-            try {
-              await saveScreenshot(session.page, companyId, "security-block");
-            } catch (screenshotError: any) {
-              console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
-            }
-          }
-          const captchaSession = registerCaptchaSession(session);
-          return {
-            type: "captcha",
-            sessionId: captchaSession.sessionId,
-            expiresAt: captchaSession.expiresAt,
-          } as const;
-        }
-
-        if (existingSession.result === "login_required") {
-          console.log("[DEBUG] login_required detected; continuing with automated login");
-          if (!session.page.isClosed()) {
-            try {
-              await saveScreenshot(session.page, companyId, "login-required");
-            } catch (screenshotError: any) {
-              console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
-            }
+        console.log("[DEBUG] Login requerido; habilitando login remoto manual");
+        if (!session.page.isClosed()) {
+          try {
+            await saveScreenshot(session.page, companyId, "login-remote-start");
+          } catch (screenshotError: any) {
+            console.log("[DEBUG] Screenshot failed:", screenshotError?.message);
           }
         }
-
-        if (existingSession.result === "two_factor_required") {
-          console.log("[DEBUG] two_factor_required detected, taking screenshot...");
-          await saveScreenshot(session.page, companyId, "two-factor-required");
-        }
-
-        if (String(process.env.BOOKING_ENABLE_AUTOMATED_LOGIN || "true").toLowerCase() === "false") {
-          await session.context.close().catch(() => undefined);
-          await session.browser.close().catch(() => undefined);
-          throw new Error("BOOKING_MANUAL_REAUTH_REQUIRED");
-        }
-
-        const authStatus = await ensureBookingAuthenticated(session);
-        const isTwoFactor = typeof authStatus === "object" && authStatus.status === "2fa_required";
-        if (isTwoFactor) {
-          const authState = await logAuthState(session.page, "2FA session created");
-          const sessionId = randomUUID();
-          const expiresAt = Date.now() + SESSION_TTL_MS;
-          const twoFactorType = authStatus.twoFactorType || mapStateToTwoFactorType(authState.state);
-          twoFactorSessions.set(sessionId, {
-            session,
-            expiresAt,
-            status: "waiting_2fa",
-            twoFactorType,
-          });
-          return {
-            type: "two_factor",
-            sessionId,
-            expiresAt,
-            phoneOptions: authStatus.phoneOptions || [],
-            twoFactorType,
-            authState,
-          } as const;
-        }
-
-        if (authStatus === "security_block") {
-          const captchaSession = registerCaptchaSession(session);
-          return {
-            type: "captcha",
-            sessionId: captchaSession.sessionId,
-            expiresAt: captchaSession.expiresAt,
-          } as const;
-        }
-
-        if (authStatus !== "ok") {
-          await session.context.close().catch(() => undefined);
-          await session.browser.close().catch(() => undefined);
-          return { type: "error", status: authStatus } as const;
-        }
-
-        const scrapeResult = await scrapeReviewsWithSession(session);
-        await savePersistedSession(session.context, companyId, "storageState");
-        await session.context.close().catch(() => undefined);
-        await session.browser.close().catch(() => undefined);
-        return { type: "result", data: scrapeResult } as const;
+        const loginSession = registerLoginSession(session);
+        return {
+          type: "login_remote",
+          sessionId: loginSession.sessionId,
+          expiresAt: loginSession.expiresAt,
+          authState: existingSession,
+        } as const;
       } catch (error) {
         if (
           !twoFactorSessions ||
@@ -841,27 +774,15 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
     });
 
     const duration = Date.now() - startTime;
-    if (result.type === "two_factor") {
-      console.log(`[SCRAPER] Two-factor required for ${companyId}`);
-      return res.status(202).json({
-        success: false,
-        requiresTwoFactor: true,
-        sessionId: result.sessionId,
-        expiresAt: result.expiresAt,
-        phoneOptions: result.phoneOptions,
-        twoFactorType: result.twoFactorType,
-        authState: result.authState,
-      });
-    }
-
-    if (result.type === "captcha") {
-      console.log(`[SCRAPER] Captcha required for ${companyId}`);
+    if (result.type === "login_remote") {
+      console.log(`[SCRAPER] Login remoto requerido para ${companyId}`);
       return res.status(202).json({
         success: false,
         requiresManualAction: true,
-        manualActionType: "captcha",
+        manualActionType: "login_remote",
         sessionId: result.sessionId,
         expiresAt: result.expiresAt,
+        authState: result.authState,
       });
     }
 
