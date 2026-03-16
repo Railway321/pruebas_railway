@@ -56,8 +56,8 @@ const COLUMN_MAP: Record<string, keyof CsvRow> = {
   "numero de reserva": "reservationId",
   "título del comentario": "title",
   "titulo del comentario": "title",
-  "comentario positivo": "content",
-  "comentario negativo": "content",
+  "comentario positivo": "positiveReview",
+  "comentario negativo": "negativeReview",
   "puntuación del comentario": "rating",
   "puntuacion del comentario": "rating",
 };
@@ -68,6 +68,8 @@ interface CsvRow {
   rating?: number;
   title?: string;
   content?: string;
+  positiveReview?: string;
+  negativeReview?: string;
   reviewDate?: string;
   reservationId?: string;
 }
@@ -144,15 +146,40 @@ export async function parseBookingCsv(
           externalId = `booking-${date}-${reservationId}`;
         }
 
-        const positiveReview =
-          rawRow["Positive review"] ?? rawRow["positive review"] ?? "";
-        const negativeReview =
-          rawRow["Negative review"] ?? rawRow["negative review"] ?? "";
-        const combinedContent = [mapped.content, positiveReview, negativeReview]
+        const positiveReview = [
+          mapped.positiveReview,
+          rawRow["Positive review"],
+          rawRow["positive review"],
+          rawRow["Comentario positivo"],
+          rawRow["comentario positivo"],
+        ]
+          .filter(Boolean)
+          .map((value) => String(value).trim())
+          .filter(Boolean)
+          .join(" ");
+
+        const negativeReview = [
+          mapped.negativeReview,
+          rawRow["Negative review"],
+          rawRow["negative review"],
+          rawRow["Comentario negativo"],
+          rawRow["comentario negativo"],
+        ]
+          .filter(Boolean)
+          .map((value) => String(value).trim())
+          .filter(Boolean)
+          .join(" ");
+
+        const combinedParts = [
+          mapped.content,
+          positiveReview ? `Positivo: ${positiveReview}` : "",
+          negativeReview ? `Negativo: ${negativeReview}` : "",
+        ]
           .filter(Boolean)
           .map((part) => part!.trim())
-          .filter(Boolean)
-          .join(" | ");
+          .filter(Boolean);
+
+        const combinedContent = combinedParts.join(" | ");
 
         const content = combinedContent || mapped.content || "";
         const fallbackContent =
