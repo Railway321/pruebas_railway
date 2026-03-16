@@ -53,9 +53,19 @@ const captchaSessions = new Map<
     companyId: string;
   }
 >();
+const loginSessions = new Map<
+  string,
+  {
+    session: BookingSession;
+    expiresAt: number;
+    status: "waiting_login";
+    companyId: string;
+  }
+>();
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 const CAPTCHA_TTL_MS = 10 * 60 * 1000;
+const LOGIN_TTL_MS = 10 * 60 * 1000;
 let lastTwoFactorScreenshotPath: string | null = null;
 let lastLoginScreenshotPath: string | null = null;
 
@@ -78,6 +88,18 @@ function registerCaptchaSession(session: BookingSession) {
     session,
     expiresAt,
     status: "waiting_captcha",
+    companyId: session.companyId,
+  });
+  return { sessionId, expiresAt };
+}
+
+function registerLoginSession(session: BookingSession) {
+  const sessionId = randomUUID();
+  const expiresAt = Date.now() + LOGIN_TTL_MS;
+  loginSessions.set(sessionId, {
+    session,
+    expiresAt,
+    status: "waiting_login",
     companyId: session.companyId,
   });
   return { sessionId, expiresAt };
@@ -120,6 +142,12 @@ function cleanupExpiredSessions() {
     if (entry.expiresAt <= now) {
       entry.session.browser.close().catch(() => undefined);
       captchaSessions.delete(sessionId);
+    }
+  }
+  for (const [sessionId, entry] of loginSessions.entries()) {
+    if (entry.expiresAt <= now) {
+      entry.session.browser.close().catch(() => undefined);
+      loginSessions.delete(sessionId);
     }
   }
 }
@@ -451,6 +479,217 @@ app.post("/captcha/:sessionId/finish", requireApiKey, async (req, res) => {
   } catch (error: any) {
     console.error("[SCRAPER] Error en /captcha/finish:", error);
     res.status(500).json({ success: false, error: error?.message || "Error al finalizar captcha" });
+  }
+});
+
+app.post("/login/:companyId/start", requireApiKey, async (req: Request, res: Response) => {
+  const companyId = (req.params.companyId || "").trim();
+
+  if (!companyId) {
+    return res.status(400).json({ success: false, error: "companyId requerido" });
+  }
+
+  try {
+    const session = await createBookingSession(companyId);
+    const authState = await checkExistingBookingSession(session);
+    const loginSession = registerLoginSession(session);
+    res.json({
+      success: true,
+      sessionId: loginSession.sessionId,
+      expiresAt: loginSession.expiresAt,
+      authState,
+      alreadyAuthenticated: authState.result === "ok",
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo iniciar login remoto" });
+  }
+});
+
+app.get("/login/:sessionId/status", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  const page = entry.session.page;
+  const state = await describeAuthState(page);
+  res.json({
+    success: true,
+    url: page.url(),
+    title: await page.title().catch(() => ""),
+    state: state.state,
+    expiresAt: entry.expiresAt,
+  });
+});
+
+app.get("/login/:sessionId/screenshot", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  try {
+    const filePath = `/tmp/login-${sessionId}-${Date.now()}.png`;
+    const page = entry.session.page;
+    const viewport = page.viewportSize();
+    const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio || 1).catch(() => 1);
+    const scrollY = await page.evaluate(() => window.scrollY || 0).catch(() => 0);
+    await page.screenshot({ path: filePath, fullPage: false });
+    const data = await fs.readFile(filePath);
+    res.json({
+      success: true,
+      contentType: "image/png",
+      base64: data.toString("base64"),
+      viewport: viewport ? { width: viewport.width, height: viewport.height } : null,
+      devicePixelRatio,
+      scrollY,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo capturar" });
+  }
+});
+
+app.post("/login/:sessionId/click", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { x, y } = req.body || {};
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  if (typeof x !== "number" || typeof y !== "number") {
+    return res.status(400).json({ success: false, error: "x e y son requeridos" });
+  }
+  try {
+    await entry.session.page.mouse.click(x, y);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo hacer click" });
+  }
+});
+
+app.post("/login/:sessionId/type", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { text } = req.body || {};
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  if (!text) {
+    return res.status(400).json({ success: false, error: "text es requerido" });
+  }
+  try {
+    await entry.session.page.keyboard.type(String(text), { delay: 20 });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo escribir" });
+  }
+});
+
+app.post("/login/:sessionId/key", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { key } = req.body || {};
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  const allowedKeys = new Set([
+    "Backspace",
+    "Delete",
+    "Enter",
+    "Tab",
+    "Escape",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+  ]);
+  if (!key || !allowedKeys.has(String(key))) {
+    return res.status(400).json({ success: false, error: "key no permitido" });
+  }
+  try {
+    await entry.session.page.keyboard.press(String(key));
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo enviar la tecla" });
+  }
+});
+
+app.post("/login/:sessionId/scroll", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { deltaY } = req.body || {};
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  if (typeof deltaY !== "number") {
+    return res.status(400).json({ success: false, error: "deltaY es requerido" });
+  }
+  try {
+    await entry.session.page.mouse.wheel(0, deltaY);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo hacer scroll" });
+  }
+});
+
+app.post("/login/:sessionId/finish", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const entry = loginSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Sesion de login no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Sesion de login expirada" });
+  }
+  try {
+    const authState = await checkExistingBookingSession(entry.session);
+    if (authState.result !== "ok") {
+      return res.status(409).json({
+        success: false,
+        error: "LOGIN_NOT_COMPLETE",
+        authState,
+      });
+    }
+    const result = await scrapeReviewsWithSession(entry.session);
+    await savePersistedSession(entry.session.context, entry.session.companyId, "storageState");
+    await entry.session.context.close().catch(() => undefined);
+    await entry.session.browser.close().catch(() => undefined);
+    loginSessions.delete(sessionId);
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo finalizar el login" });
   }
 });
 
