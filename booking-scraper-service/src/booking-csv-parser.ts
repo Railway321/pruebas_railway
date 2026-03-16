@@ -99,6 +99,26 @@ function getStartOfYear(): Date {
   return new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
 }
 
+function decodeCsvBuffer(buffer: Buffer): string {
+  const utf8 = buffer.toString("utf8");
+  const latin1 = buffer.toString("latin1");
+  const score = (value: string) => {
+    const badChars = (value.match(/[\uFFFD]/g) || []).length;
+    const mojibake = (value.match(/Ã./g) || []).length;
+    return badChars * 3 + mojibake;
+  };
+  return score(utf8) <= score(latin1) ? utf8 : latin1;
+}
+
+function dedupeRepeatedText(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const match = normalized.match(/^(.+?)\s*(?:\|\s*)?\1$/);
+  if (match?.[1]) {
+    return match[1].trim();
+  }
+  return normalized;
+}
+
 export async function parseBookingCsv(
   buffer: Buffer
 ): Promise<{ rows: InsertReview[]; errors: string[] }> {
@@ -121,7 +141,8 @@ export async function parseBookingCsv(
   return new Promise((resolve, reject) => {
     let headerMap: Record<string, keyof CsvRow> = {};
 
-    parseString(buffer.toString("utf-8"), {
+    const csvText = decodeCsvBuffer(buffer);
+    parseString(csvText, {
       headers: true,
       trim: true,
     })
@@ -170,10 +191,19 @@ export async function parseBookingCsv(
           .filter(Boolean)
           .join(" ");
 
+        const normalizedPositive = positiveReview ? dedupeRepeatedText(positiveReview) : "";
+        const normalizedNegative = negativeReview ? dedupeRepeatedText(negativeReview) : "";
+        const baseContent = mapped.content ? dedupeRepeatedText(String(mapped.content)) : "";
+        const baseContentTrimmed = baseContent.trim();
+
         const combinedParts = [
-          mapped.content,
-          positiveReview ? `Positivo: ${positiveReview}` : "",
-          negativeReview ? `Negativo: ${negativeReview}` : "",
+          baseContentTrimmed &&
+          baseContentTrimmed !== normalizedPositive &&
+          baseContentTrimmed !== normalizedNegative
+            ? baseContentTrimmed
+            : "",
+          normalizedPositive ? `Positivo: ${normalizedPositive}` : "",
+          normalizedNegative ? `Negativo: ${normalizedNegative}` : "",
         ]
           .filter(Boolean)
           .map((part) => part!.trim())
@@ -181,7 +211,7 @@ export async function parseBookingCsv(
 
         const combinedContent = combinedParts.join(" | ");
 
-        const content = combinedContent || mapped.content || "";
+        const content = combinedContent || baseContentTrimmed || "";
         const fallbackContent =
           content ||
           `Reseña sin comentario (puntuación: ${parseRating(

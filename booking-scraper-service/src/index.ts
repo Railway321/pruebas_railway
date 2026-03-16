@@ -23,6 +23,7 @@ import {
   saveScreenshot,
   type BookingSession,
   type AuthCheckResult,
+  type ScrapeResult,
 } from "./booking-scraper.js";
 
 const app = express();
@@ -710,12 +711,33 @@ app.post("/login/:sessionId/finish", requireApiKey, async (req, res) => {
         authState,
       });
     }
-    const result = await scrapeReviewsWithSession(entry.session);
-    await savePersistedSession(entry.session.context, entry.session.companyId, "storageState");
-    await entry.session.context.close().catch(() => undefined);
-    await entry.session.browser.close().catch(() => undefined);
-    loginSessions.delete(sessionId);
-    res.json({ success: true, data: result });
+    try {
+      let result: ScrapeResult;
+      try {
+        result = await scrapeReviewsWithSession(entry.session);
+      } catch (error: any) {
+        const message = String(error?.message || "");
+        if (message.includes("BOOKING_AUTH_CONTEXT_NOT_READY_FOR_REVIEWS")) {
+          await entry.session.page.waitForTimeout(2000).catch(() => undefined);
+          result = await scrapeReviewsWithSession(entry.session);
+        } else {
+          throw error;
+        }
+      }
+      await savePersistedSession(entry.session.context, entry.session.companyId, "storageState");
+      await entry.session.context.close().catch(() => undefined);
+      await entry.session.browser.close().catch(() => undefined);
+      loginSessions.delete(sessionId);
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      await savePersistedSession(entry.session.context, entry.session.companyId, "storageState").catch(() => undefined);
+      await entry.session.context.close().catch(() => undefined);
+      await entry.session.browser.close().catch(() => undefined);
+      loginSessions.delete(sessionId);
+      const message =
+        "no se ha podido completar el flujo, sesión guardada, reintenta";
+      res.status(409).json({ success: false, error: message });
+    }
   } catch (error: any) {
     const message = error?.message || "No se pudo finalizar el login";
     res.status(500).json({ success: false, error: message });
