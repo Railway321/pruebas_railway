@@ -709,6 +709,7 @@ async function resolveLoginIdentifier(
   const mode = (process.env.BOOKING_EXTRANET_LOGIN_MODE || "").toLowerCase();
   if (mode === "email" && email) return email;
   if (mode === "username") return username;
+  if (!email) return username;
 
   const usernameSelector = LOGIN_USERNAME_SELECTOR;
   const hints = await page
@@ -730,9 +731,8 @@ async function resolveLoginIdentifier(
     .catch(() => "");
 
   const looksLikeEmail = /email|e-mail|correo/.test(hints);
-  if (looksLikeEmail && email) {
-    console.log("[SCRAPER] Using email identifier based on input hints");
-    return email;
+  if (looksLikeEmail) {
+    console.log("[SCRAPER] Input hints look like email, defaulting to username");
   }
 
   const looksLikeUsername = /loginname|username|user id|id de usuario|también llamado|tambien llamado|usuario/.test(hints);
@@ -1567,7 +1567,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     const usernameInputAfter = (await getFirstVisibleLocator(page, usernameSelector)) || page.locator(usernameSelector).first();
     const loginIdentifier = await resolveLoginIdentifier(page, username, loginEmail);
     const currentValue = await usernameInputAfter.inputValue().catch(() => "");
-    if (!currentValue) {
+    if (!currentValue || currentValue.trim() !== loginIdentifier) {
       await usernameInputAfter.fill("").catch(() => undefined);
       await usernameInputAfter.type(loginIdentifier, { delay: Math.random() * 80 + 30 });
       await humanDelay(page);
