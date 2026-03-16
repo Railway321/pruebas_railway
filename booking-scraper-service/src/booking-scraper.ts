@@ -338,6 +338,17 @@ function isBookingSsoUrl(url: string): boolean {
   return url.includes("bookingholdings.okta.com/") || url.includes("corpsso.booking.com/");
 }
 
+function isExtranetSessionUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("booking.com")) return false;
+    if (!parsed.pathname.includes("/extranet_ng/")) return false;
+    return parsed.searchParams.has("ses");
+  } catch {
+    return false;
+  }
+}
+
 const LOGIN_USERNAME_SELECTOR = [
   'input[name="username"]',
   'input[name="identifier"]',
@@ -1202,25 +1213,33 @@ export async function checkExistingBookingSession(
   const state = await describeAuthState(page);
   console.log("[DEBUG] describeAuthState result:", state.state, "| url:", state.url);
 
+  const loginUrl = getEnvOrThrow("BOOKING_LOGIN_URL");
+  const hasExtranetSession =
+    isExtranetSessionUrl(state.url) && !isBookingLoginUrl(state.url, loginUrl);
+
   let result: AuthCheckResult;
-  switch (state.state) {
-    case "login_full":
-    case "login_username":
-    case "login_password":
-      result = "login_required";
-      break;
+  if (hasExtranetSession) {
+    result = "ok";
+  } else {
+    switch (state.state) {
+      case "login_full":
+      case "login_username":
+      case "login_password":
+        result = "login_required";
+        break;
     case "two_factor":
     case "two_factor_email":
       result = "two_factor_required";
       break;
-    case "security_check":
-      result = "security_block";
-      break;
-    default:
-      result = isBookingLoginUrl(state.url, getEnvOrThrow("BOOKING_LOGIN_URL")) || (await looksLikeLogin(page))
-        ? "login_required"
-        : "ok";
-      break;
+      case "security_check":
+        result = "security_block";
+        break;
+      default:
+        result = isBookingLoginUrl(state.url, loginUrl) || (await looksLikeLogin(page))
+          ? "login_required"
+          : "ok";
+        break;
+    }
   }
 
   await saveMetadata(companyId, {
