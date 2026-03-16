@@ -786,16 +786,6 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
       });
     }
 
-    if (result.type === "error") {
-      const message =
-        result.status === "invalid_credentials"
-          ? "BOOKING_AUTH_INVALID_CREDENTIALS"
-          : result.status === "unknown"
-          ? "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR"
-          : "BOOKING_AUTH_UNKNOWN_LOGIN_ERROR";
-      throw new Error(message);
-    }
-
     console.log(
       `[SCRAPER] Scraping completed in ${duration}ms. Reviews: ${result.data.reviews.length}, Errors: ${result.data.errors.length}`
     );
