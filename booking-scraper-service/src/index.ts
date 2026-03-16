@@ -312,9 +312,20 @@ app.get("/captcha/:sessionId/screenshot", requireApiKey, async (req, res) => {
   }
   try {
     const filePath = `/tmp/captcha-${sessionId}-${Date.now()}.png`;
-    await entry.session.page.screenshot({ path: filePath, fullPage: true });
+    const page = entry.session.page;
+    const viewport = page.viewportSize();
+    const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio || 1).catch(() => 1);
+    const scrollY = await page.evaluate(() => window.scrollY || 0).catch(() => 0);
+    await page.screenshot({ path: filePath, fullPage: false });
     const data = await fs.readFile(filePath);
-    res.json({ success: true, contentType: "image/png", base64: data.toString("base64") });
+    res.json({
+      success: true,
+      contentType: "image/png",
+      base64: data.toString("base64"),
+      viewport: viewport ? { width: viewport.width, height: viewport.height } : null,
+      devicePixelRatio,
+      scrollY,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error?.message || "No se pudo capturar" });
   }
