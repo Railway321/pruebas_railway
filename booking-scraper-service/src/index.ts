@@ -366,6 +366,29 @@ app.post("/captcha/:sessionId/type", requireApiKey, async (req, res) => {
   }
 });
 
+app.post("/captcha/:sessionId/scroll", requireApiKey, async (req, res) => {
+  const sessionId = (req.params.sessionId || "").trim();
+  const { deltaY } = req.body || {};
+  const entry = captchaSessions.get(sessionId);
+  if (!entry) {
+    return res.status(404).json({ success: false, error: "Captcha session no encontrada" });
+  }
+  if (entry.expiresAt <= Date.now()) {
+    entry.session.browser.close().catch(() => undefined);
+    captchaSessions.delete(sessionId);
+    return res.status(410).json({ success: false, error: "Captcha session expirada" });
+  }
+  if (typeof deltaY !== "number") {
+    return res.status(400).json({ success: false, error: "deltaY es requerido" });
+  }
+  try {
+    await entry.session.page.mouse.wheel(0, deltaY);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "No se pudo hacer scroll" });
+  }
+});
+
 app.post("/captcha/:sessionId/finish", requireApiKey, async (req, res) => {
   const sessionId = (req.params.sessionId || "").trim();
   const entry = captchaSessions.get(sessionId);

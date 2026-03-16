@@ -1291,7 +1291,10 @@ async function clickFirstVisible(locators: Array<ReturnType<Page["locator"]>>): 
     const first = locator.first();
     const visible = await first.isVisible().catch(() => false);
     if (visible) {
-      await first.click().catch(() => undefined);
+      await first.scrollIntoViewIfNeeded().catch(() => undefined);
+      const clicked = await first.click({ timeout: 2000 }).then(() => true).catch(() => false);
+      if (clicked) return true;
+      await first.evaluate((el) => (el as HTMLElement).click()).catch(() => undefined);
       return true;
     }
   }
@@ -1316,6 +1319,8 @@ async function submitLoginStep(
       await input.press("Enter").catch(() => undefined);
       await page.keyboard.press("Enter").catch(() => undefined);
     }
+
+    await page.waitForLoadState("domcontentloaded").catch(() => undefined);
 
     await humanDelay(page, 1200, 2200);
     const state = await describeAuthState(page);
