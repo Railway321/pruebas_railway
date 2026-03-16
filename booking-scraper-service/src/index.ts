@@ -360,7 +360,7 @@ app.get("/captcha/:sessionId/screenshot", requireApiKey, async (req, res) => {
     const viewport = page.viewportSize();
     const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio || 1).catch(() => 1);
     const scrollY = await page.evaluate(() => window.scrollY || 0).catch(() => 0);
-    await page.screenshot({ path: filePath, fullPage: false });
+    await page.screenshot({ path: filePath, fullPage: false, timeout: 10000 });
     const data = await fs.readFile(filePath);
     res.json({
       success: true,
@@ -560,7 +560,7 @@ app.get("/login/:sessionId/screenshot", requireApiKey, async (req, res) => {
     const viewport = page.viewportSize();
     const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio || 1).catch(() => 1);
     const scrollY = await page.evaluate(() => window.scrollY || 0).catch(() => 0);
-    await page.screenshot({ path: filePath, fullPage: false });
+    await page.screenshot({ path: filePath, fullPage: false, timeout: 10000 });
     const data = await fs.readFile(filePath);
     res.json({
       success: true,
