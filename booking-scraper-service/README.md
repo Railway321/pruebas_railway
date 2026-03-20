@@ -19,6 +19,8 @@ Microservicio Express + Playwright que inicia sesión en la extranet de Booking,
 | `PORT` | Puerto HTTP (Railway lo define automáticamente) |
 | `BOOKING_COOKIES_DIR` | (Opcional) Ruta donde guardar cookies; por defecto `./cookies` |
 | `BOOKING_ENABLE_AUTOMATED_LOGIN` | (Opcional) Habilita el login automático como fallback. Por defecto `true`. Si es `false`, el scraper solo usará sesiones persistidas. |
+| `APP_INTERNAL_BASE_URL` | (Opcional) URL base de la app Valoraciones para persistir sesión en DB |
+| `APP_INTERNAL_API_KEY` | (Opcional) API key compartida para comunicar scraper ↔ app |
 
 ## Endpoints de Sesión (Gestión manual de cookies)
 

@@ -5,6 +5,13 @@ import { parseBookingCsv, type InsertReview } from "./booking-csv-parser.js";
 
 const COOKIE_DIR = process.env.BOOKING_COOKIES_DIR || path.join(process.cwd(), "cookies");
 
+function getAppSessionConfig(): { baseUrl: string; apiKey: string } | null {
+  const baseUrl = process.env.APP_INTERNAL_BASE_URL;
+  const apiKey = process.env.APP_INTERNAL_API_KEY;
+  if (!baseUrl || !apiKey) return null;
+  return { baseUrl: baseUrl.replace(/\/$/, ""), apiKey };
+}
+
 function getEnvOrThrow(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -208,6 +215,38 @@ export async function loadPersistedSession(
       }
     }
 
+    const appConfig = getAppSessionConfig();
+    if (appConfig) {
+      try {
+        const response = await fetch(
+          `${appConfig.baseUrl}/api/internal/booking-session/${companyId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${appConfig.apiKey}`,
+            },
+          }
+        );
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload?.data?.storageState) {
+          const storageState = payload.data.storageState;
+          if (Array.isArray(storageState.cookies) && storageState.cookies.length > 0) {
+            const normalizedCookies = normalizeCookies(storageState.cookies);
+            await context.addCookies(normalizedCookies);
+            await saveMetadata(companyId, {
+              format: "storageState",
+              lastLoadedAt: new Date().toISOString(),
+            });
+            console.log(
+              `[SCRAPER] Loaded storageState from app with ${storageState.cookies.length} cookies`
+            );
+            return { format: "storageState", loaded: true };
+          }
+        }
+      } catch (error) {
+        console.warn("[SCRAPER] No se pudo cargar sesión desde la app:", error);
+      }
+    }
+
     await loadCookies(context, companyId);
     return { format: "cookies", loaded: false };
   } catch (error) {
@@ -228,6 +267,20 @@ export async function savePersistedSession(
       const storageState = await context.storageState();
       await fs.writeFile(getStorageStatePath(companyId), JSON.stringify(storageState, null, 2), "utf8");
       console.log(`[SCRAPER] Saved storageState with ${storageState.cookies.length} cookies`);
+
+      const appConfig = getAppSessionConfig();
+      if (appConfig) {
+        fetch(`${appConfig.baseUrl}/api/internal/booking-session/${companyId}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${appConfig.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ storageState }),
+        }).catch((error) => {
+          console.warn("[SCRAPER] No se pudo guardar sesión en la app:", error);
+        });
+      }
     }
 
     await saveCookies(context, companyId);
