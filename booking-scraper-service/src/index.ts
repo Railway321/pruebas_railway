@@ -793,7 +793,18 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
           return { type: "result", data: scrapeResult } as const;
         }
 
-        console.log("[DEBUG] Login requerido; habilitando login remoto manual");
+        console.log("[DEBUG] Login requerido; intentando autologin con usuario/contraseña");
+        const authStatus = await ensureBookingAuthenticated(session);
+
+        if (authStatus === "ok") {
+          const scrapeResult = await scrapeReviewsWithSession(session);
+          await savePersistedSession(session.context, companyId, "storageState");
+          await session.context.close().catch(() => undefined);
+          await session.browser.close().catch(() => undefined);
+          return { type: "result", data: scrapeResult } as const;
+        }
+
+        console.log("[DEBUG] Autologin no disponible; habilitando login remoto manual");
         const loginSession = registerLoginSession(session);
         return {
           type: "login_remote",
