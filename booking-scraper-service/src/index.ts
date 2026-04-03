@@ -795,6 +795,7 @@ app.post("/scrape/:companyId", requireApiKey, async (req: Request, res: Response
 
         console.log("[DEBUG] Login requerido; intentando autologin con usuario/contraseña");
         const authStatus = await ensureBookingAuthenticated(session);
+        console.log("[DEBUG] Autologin result:", authStatus);
 
         if (authStatus === "ok") {
           const scrapeResult = await scrapeReviewsWithSession(session);

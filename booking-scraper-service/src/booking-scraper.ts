@@ -756,6 +756,28 @@ async function logDetailedPageState(page: Page, step: string): Promise<void> {
   }
 }
 
+async function findVisiblePasswordLocator(page: Page): Promise<Locator | null> {
+  const primary = page.locator(LOGIN_PASSWORD_SELECTOR).first();
+  if (await primary.isVisible().catch(() => false)) return primary;
+
+  const labelLocator = page.getByLabel(/contraseña|password/i).first();
+  if (await labelLocator.isVisible().catch(() => false)) return labelLocator;
+
+  const anyPassword = page.locator('input[type="password"]:not([id="hidden-password"])').first();
+  if (await anyPassword.isVisible().catch(() => false)) return anyPassword;
+
+  for (const frame of page.frames()) {
+    const framePrimary = frame.locator(LOGIN_PASSWORD_SELECTOR).first();
+    if (await framePrimary.isVisible().catch(() => false)) return framePrimary;
+    const frameLabel = frame.getByLabel(/contraseña|password/i).first();
+    if (await frameLabel.isVisible().catch(() => false)) return frameLabel;
+    const frameAny = frame.locator('input[type="password"]:not([id="hidden-password"])').first();
+    if (await frameAny.isVisible().catch(() => false)) return frameAny;
+  }
+
+  return null;
+}
+
 async function resolveLoginIdentifier(
   page: Page,
   username: string,
@@ -1589,8 +1611,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     }
   }
 
-  const passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
+  let passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
   const usernameInputAfterVisible = await hasVisibleSelector(page, usernameSelector);
+
+  if (!passwordInputAfterVisible) {
+    await page
+      .waitForSelector(passwordSelector, { state: "visible", timeout: 15000 })
+      .catch(() => undefined);
+    passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
+  }
 
   if (!passwordInputAfterVisible) {
     const state = await describeAuthState(page);
@@ -1625,7 +1654,10 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     }
   }
 
-  const passwordInputAfter = (await getFirstVisibleLocator(page, passwordSelector)) || page.locator(passwordSelector).first();
+  const passwordInputAfter =
+    (await findVisiblePasswordLocator(page)) ||
+    (await getFirstVisibleLocator(page, passwordSelector)) ||
+    page.locator(passwordSelector).first();
   await passwordInputAfter.fill("").catch(() => undefined);
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await logInputValueLengths(page, "after password fill");
