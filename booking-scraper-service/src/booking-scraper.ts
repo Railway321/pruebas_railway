@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Page, type Frame } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Frame, type Locator } from "playwright";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseBookingCsv, type InsertReview } from "./booking-csv-parser.js";
