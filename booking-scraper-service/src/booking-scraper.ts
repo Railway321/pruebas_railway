@@ -778,6 +778,26 @@ async function findVisiblePasswordLocator(page: Page): Promise<Locator | null> {
   return null;
 }
 
+async function waitForPasswordLocator(page: Page, timeoutMs = 15000): Promise<Locator | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const locator = await findVisiblePasswordLocator(page);
+    if (locator) return locator;
+    await page.waitForTimeout(500);
+  }
+  return null;
+}
+
+async function shouldFlagSecurityChallenge(
+  page: Page,
+  bodyText: string,
+  title: string,
+  url: string
+): Promise<boolean> {
+  if (await hasLoginFields(page)) return false;
+  return detectSecurityChallenge(bodyText, title, url);
+}
+
 async function resolveLoginIdentifier(
   page: Page,
   username: string,
@@ -1595,7 +1615,14 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     await logDetailedPageState(page, "AFTER_USERNAME_SUBMIT");
 
     const afterUsernameBody = ((await page.textContent("body")) || "").toLowerCase();
-    if (detectSecurityChallenge(afterUsernameBody, await page.title().catch(() => ""), page.url())) {
+    if (
+      await shouldFlagSecurityChallenge(
+        page,
+        afterUsernameBody,
+        await page.title().catch(() => ""),
+        page.url()
+      )
+    ) {
       return "security_block";
     }
 
@@ -1615,10 +1642,8 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
   const usernameInputAfterVisible = await hasVisibleSelector(page, usernameSelector);
 
   if (!passwordInputAfterVisible) {
-    await page
-      .waitForSelector(passwordSelector, { state: "visible", timeout: 15000 })
-      .catch(() => undefined);
-    passwordInputAfterVisible = await hasVisibleSelector(page, passwordSelector);
+    const waited = await waitForPasswordLocator(page, 15000);
+    passwordInputAfterVisible = Boolean(waited);
   }
 
   if (!passwordInputAfterVisible) {
@@ -1629,7 +1654,14 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     await logVisibleInputs(page, "before password entry");
     await logDetailedPageState(page, "BEFORE_PASSWORD_ENTRY");
     const prePasswordBody = ((await page.textContent("body")) || "").toLowerCase();
-    if (detectSecurityChallenge(prePasswordBody, await page.title().catch(() => ""), page.url())) {
+    if (
+      await shouldFlagSecurityChallenge(
+        page,
+        prePasswordBody,
+        await page.title().catch(() => ""),
+        page.url()
+      )
+    ) {
       return "security_block";
     }
     if (state.state === "two_factor") {
@@ -1658,6 +1690,7 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
     (await findVisiblePasswordLocator(page)) ||
     (await getFirstVisibleLocator(page, passwordSelector)) ||
     page.locator(passwordSelector).first();
+  await passwordInputAfter.click({ force: true }).catch(() => undefined);
   await passwordInputAfter.fill("").catch(() => undefined);
   await passwordInputAfter.type(password, { delay: Math.random() * 80 + 30 });
   await logInputValueLengths(page, "after password fill");
@@ -1677,7 +1710,15 @@ export async function ensureBookingAuthenticated(session: BookingSession): Promi
 
   const postPasswordBody = ((await page.textContent("body")) || "").toLowerCase();
   const stillHasLogin = await hasLoginFields(page);
-  if (!stillHasLogin && detectSecurityChallenge(postPasswordBody, await page.title().catch(() => ""), page.url())) {
+  if (
+    !stillHasLogin &&
+    (await shouldFlagSecurityChallenge(
+      page,
+      postPasswordBody,
+      await page.title().catch(() => ""),
+      page.url()
+    ))
+  ) {
     return "security_block";
   }
 
